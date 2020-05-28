@@ -1,4 +1,4 @@
-data/
+data/**/*.npy
 outputs/
 output/
 *.pyc
