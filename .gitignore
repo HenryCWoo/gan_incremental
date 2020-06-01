@@ -1,4 +1,5 @@
 data/**/*.npy
+data/**/*.sav
 outputs/
 output/
 *.pyc
