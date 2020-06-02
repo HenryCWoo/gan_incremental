@@ -23,7 +23,7 @@ torch.backends.cudnn.benchmark = False
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Save paths
-attempt = '2_with_normalization'
+attempt = 3
 CLS_MODEL_CHECKPOINT_PATH = './saved_models/cls_model_v%s.sav' % attempt
 ADV_MODEL_CHECKPOINT_PATH = './saved_models/adv_model_v%s.sav' % attempt
 CLASS_FEAT_VECS_PATH = './saved_models/class_feat_vecs/class_feat_vecs_v%s.sav' % attempt
@@ -36,7 +36,7 @@ CLS_LR = 0.001  # Train D on initial X classes
 CLS_EPOCHS = 16  # TODO: Increase classifier epochs when performing actual experiments
 
 ADV_LR = 0.0002
-ADV_EPOCHS = 20
+ADV_EPOCHS = 50
 
 # Labels for real and fake
 REAL_LABEL = 1.0  # TODO: Try out 0.9 and 0.1 for less confident adversary
@@ -60,7 +60,7 @@ class Prototype():
         self._init_data_loaders()
 
         # Optimizers & Schedulers
-        self._init_cls_optim_sched()
+        self._init_cls_optim()
         self._init_gen_optim()
         self._init_disc_optim()
 
@@ -89,13 +89,13 @@ class Prototype():
 
     def _init_feat_vecs_loaders(self):
         # TODO: Train test split
-        feat_vecs_set = FeatVecsDataset(self.class_feat_vecs)
+        self.feat_vecs_set = FeatVecsDataset(self.class_feat_vecs)
         self.train_feat_vecs_loader = torch.utils.data.DataLoader(
-            feat_vecs_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-        # self.test_feat_vecs_loader = torch.utils.DataLoader(
-        #     feat_vecs_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+            self.feat_vecs_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+        self.test_feat_vecs_loader = torch.utils.DataLoader(
+            self.feat_vecs_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
-    def _init_cls_optim_sched(self):
+    def _init_cls_optim(self):
         self.cls_optimizer = optim.Adam(
             self.disc.parameters(), lr=CLS_LR, betas=(0.5, 0.999))
         self.cls_scheduler = optim.lr_scheduler.StepLR(
@@ -117,8 +117,9 @@ class Prototype():
         correct = 0
         total = 0
 
+        print("*** Evaluating discriminator classification on base-net feature maps.")
         with torch.no_grad():
-            for data in self.test_loader:
+            for _, data in enumerate(tqdm(self.test_loader)):
                 featmaps, labels = data[1].to(device), data[2].to(
                     device)  # data[1] = featmaps | data[2] = label
 
@@ -127,15 +128,18 @@ class Prototype():
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
-        return ('%.2f%%' % (100.0 * (correct / total)))
+        return ('%.4f%%' % (100.0 * (correct / total)))
 
     def _get_disc_cls_acc_gen(self):
         self.disc.eval()  # Turn off training mode.
+        self.gen.eval()
+
         correct = 0
         total = 0
 
+        print("*** Evaluating discriminator classification on generated feature maps.")
         with torch.no_grad():
-            for (feat_vecs, labels) in self.train_feat_vecs_loader:
+            for _, (feat_vecs, labels) in enumerate(tqdm(self.test_feat_vecs_loader)):
                 feat_vecs, labels = feat_vecs.to(
                     device, dtype=torch.float), labels.to(device)
 
@@ -146,7 +150,7 @@ class Prototype():
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
-        return ('%.2f%%' % (100.0 * (correct / total)))
+        return ('%.4f%%' % (100.0 * (correct / total)))
 
     def _get_lr(self, optimizer):
         for param_group in optimizer.param_groups:
@@ -164,6 +168,7 @@ class Prototype():
     def _save_class_feat_vecs(self, save=True):
         # Save features for inputs to generator
         print("*** Saving feature vectors for inputs to generator")
+        self.disc.eval()
 
         # Reset buffer
         self.class_feat_vecs = np.zeros((CLASSES, 5000, 512))
@@ -217,7 +222,7 @@ class Prototype():
         # TODO: Add training for class_feat_vecs if not initial training
 
         # Reset optimizer and scheduler
-        self._init_cls_optim_sched()
+        self._init_cls_optim()
 
         self.disc.train()
 
@@ -249,8 +254,6 @@ class Prototype():
             'optimizer_state_dict': self.cls_optimizer.state_dict(),
         }, CLS_MODEL_CHECKPOINT_PATH)
         print("*** Discriminator model saved.")
-
-        self.disc.train()
 
     def _train_adv(self):
         print("*** Adversarial Training...")
@@ -377,8 +380,8 @@ class Prototype():
             self._train_cls(is_initial=True)
 
         # Check initial discriminator classification accuracy
-        disc_acc = self._get_disc_cls_acc()
-        print("CLASSIFICATION ACCURACY:", disc_acc)
+        print("BASE-NET FEATURE MAPS INITIAL CLASSIFICATION ACCURACY:",
+              self._get_disc_cls_acc())
 
         # 2. <Skipped> Calculate statistics {m, covmat}_0 of normalized embeddings for initial classes
 
@@ -389,19 +392,20 @@ class Prototype():
         else:
             self._save_class_feat_vecs()
 
-        # # 4. Alternately train G and D in an adversarial way using {X_0, {u}_0} and overall loss function
+        # 4. Alternately train G and D in an adversarial way using {X_0, {u}_0} and overall loss function
         if os.path.exists(ADV_MODEL_CHECKPOINT_PATH):
             self._load_adv()
             print('*** Loaded adversary model (Discriminator and Generator).')
         else:
             self._train_adv()
 
-        # # 5. Update {m, covmat}_0, {u}_0
-        # self._save_class_feat_vecs()
+        # 5. Update {m, covmat}_0, {u}_0
+        self._save_class_feat_vecs()
 
         # Check discriminator classification accuracy
         print("BASE-NET FEATURE MAPS CLASSIFICATION ACCURACY:",
               self._get_disc_cls_acc())
+
         print("DISC FEATURE VECTORS CLASSIFICATION ACCURACY:",
               self._get_disc_cls_acc_gen())
 
