@@ -22,9 +22,10 @@ torch.backends.cudnn.benchmark = False
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Save paths
-CLS_MODEL_CHECKPOINT_PATH = './saved_models/cls_model_no_norm.sav'
-ADV_MODEL_CHECKPOINT_PATH = './saved_models/adv_model_no_norm.sav'
-CLASS_FEAT_VECS_PATH = './saved_models/class_feat_vecs/class_feat_vecs_no_norm.sav'
+attempt = 1
+CLS_MODEL_CHECKPOINT_PATH = './saved_models/cls_model_v%s.sav' % attempt
+ADV_MODEL_CHECKPOINT_PATH = './saved_models/adv_model_v%s.sav' % attempt
+CLASS_FEAT_VECS_PATH = './saved_models/class_feat_vecs/class_feat_vecs_v%s.sav' % attempt
 
 # Hyperparameters
 CLASSES = 10
@@ -38,7 +39,7 @@ ADV_EPOCHS = 20
 
 # Labels for real and fake
 REAL_LABEL = 1.0
-FAKE_LABEL = 0.0
+FAKE_LABEL = 1.0 - REAL_LABEL
 
 
 class Prototype():
@@ -238,8 +239,6 @@ class Prototype():
         self.disc.train()
 
         for epoch in range(CLS_EPOCHS):
-            print('[CLS TRAINING] EPOCH %d STARTED' % (epoch + 1))
-
             _loss_cls = 0.
             for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
                 featmaps, targets = featmaps.to(device), targets.to(device)
@@ -347,11 +346,12 @@ class Prototype():
                 # ==========================================================
                 # ===== Optimize Generator: max log(D(G(u | m_i, covmat_i)))
                 # ==========================================================
+                # TODO: Include classification loss into generator loss
                 self.gen.zero_grad()
                 gen_feats, gen_logits_cls, gen_logits_adv = self.disc(
                     gen_feats_maps)
                 gen_loss = self._adversarial_loss(
-                    gen_logits_adv, False, criterion=self.adv_criterion)
+                    gen_logits_adv, True, criterion=self.adv_criterion)  # Real is set to true because we are encouraging the GAN to appear real
 
                 _loss_g += gen_loss.mean().item()
 
@@ -359,7 +359,7 @@ class Prototype():
                 self.optimizer_g.step()
 
                 if batch_idx % 100 == 99:    # print every 100 mini-batches
-                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss    : %.5f disc_loss    : %.5f \ncls_gen_loss: %.5f cls_real_loss: %.5f \nadv_gen_loss: %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_loss: %.5f\n' %
+                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_loss  : %.5f\n' %
                           (epoch + 1, batch_idx + 1, _loss_g / 100, _loss_d / 100, _loss_cls_gen / 100, _loss_cls_real / 100, _loss_adv_gen / 100, _loss_adv_real / 100, _reconstr_loss / 100, _overall_loss / 100))
                     _loss_g, _loss_cls_gen, _loss_adv_gen, _reconstr_loss = 0., 0., 0., 0.
                     _loss_d, _loss_cls_real, _loss_adv_real = 0., 0., 0.
@@ -411,8 +411,10 @@ class Prototype():
         self._save_class_feat_vecs()
 
         # Check discriminator classification accuracy
-        print("REAL CLASSIFICATION ACCURACY:", self._get_disc_cls_acc())
-        print("FAKE CLASSIFICATION ACCURACY:", self._get_disc_cls_acc_gen())
+        print("BASE-NET FEATURE MAPS CLASSIFICATION ACCURACY:",
+              self._get_disc_cls_acc())
+        print("DISC FEATURE VECTORS CLASSIFICATION ACCURACY:",
+              self._get_disc_cls_acc_gen())
 
 
 if __name__ == '__main__':
