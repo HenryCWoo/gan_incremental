@@ -4,6 +4,7 @@ from tqdm import tqdm
 
 from generator import generator
 from discriminator import discriminator
+from feat_vecs_loader import FeatVecsDataset
 from cifar10_featmap import CIFAR10_featmap as CIFAR10
 
 import torch
@@ -22,7 +23,7 @@ torch.backends.cudnn.benchmark = False
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Save paths
-attempt = 1
+attempt = '2_with_normalization'
 CLS_MODEL_CHECKPOINT_PATH = './saved_models/cls_model_v%s.sav' % attempt
 ADV_MODEL_CHECKPOINT_PATH = './saved_models/adv_model_v%s.sav' % attempt
 CLASS_FEAT_VECS_PATH = './saved_models/class_feat_vecs/class_feat_vecs_v%s.sav' % attempt
@@ -32,13 +33,13 @@ CLASSES = 10
 BATCH_SIZE = 100
 
 CLS_LR = 0.001  # Train D on initial X classes
-CLS_EPOCHS = 16
+CLS_EPOCHS = 16  # TODO: Increase classifier epochs when performing actual experiments
 
 ADV_LR = 0.0002
 ADV_EPOCHS = 20
 
 # Labels for real and fake
-REAL_LABEL = 1.0
+REAL_LABEL = 1.0  # TODO: Try out 0.9 and 0.1 for less confident adversary
 FAKE_LABEL = 1.0 - REAL_LABEL
 
 
@@ -48,9 +49,6 @@ class Prototype():
         self.disc = discriminator().to(device)
         self.gen = generator(deconv=False).to(device)
 
-        # Data loaders
-        self._init_data_loaders()
-
         # Loss functions
         self.cls_criterion = nn.CrossEntropyLoss()
         self.adv_criterion = nn.BCEWithLogitsLoss()
@@ -58,6 +56,8 @@ class Prototype():
         # Replay buffer
         self.class_feat_vecs = np.zeros((CLASSES, 5000, 512))
         self.class_feat_counts = [0] * CLASSES
+        # Data loaders
+        self._init_data_loaders()
 
         # Optimizers & Schedulers
         self._init_cls_optim_sched()
@@ -81,8 +81,19 @@ class Prototype():
                                                         shuffle=True, num_workers=0)
         self.test_loader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
                                                        shuffle=False, num_workers=0)
+
+        self._init_feat_vecs_loaders()
+
         self.classes = ('plane', 'car', 'bird', 'cat',
                         'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+    def _init_feat_vecs_loaders(self):
+        # TODO: Train test split
+        feat_vecs_set = FeatVecsDataset(self.class_feat_vecs)
+        self.train_feat_vecs_loader = torch.utils.data.DataLoader(
+            feat_vecs_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+        # self.test_feat_vecs_loader = torch.utils.DataLoader(
+        #     feat_vecs_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
     def _init_cls_optim_sched(self):
         self.cls_optimizer = optim.Adam(
@@ -119,36 +130,18 @@ class Prototype():
         return ('%.2f%%' % (100.0 * (correct / total)))
 
     def _get_disc_cls_acc_gen(self):
-        '''
-        Param #loader must be set to testloader or trainloader
-        '''
         self.disc.eval()  # Turn off training mode.
         correct = 0
         total = 0
 
         with torch.no_grad():
-            # correct = 0
-            # total = 0
-            # for label in range(CLASSES):
-            #     samples = torch.Tensor(
-            #         self.class_feat_vecs[label][:100]).to(device)
-            #     labels = torch.Tensor([label for _ in range(100)]).to(device)
+            for (feat_vecs, labels) in self.train_feat_vecs_loader:
+                feat_vecs, labels = feat_vecs.to(
+                    device, dtype=torch.float), labels.to(device)
 
-            # gen_feats_maps = self.gen(samples.unsqueeze(2).unsqueeze(3))
-            #     _, logits_cls, _ = self.disc(gen_feats_maps)
-            #     _, predicted = torch.max(logits_cls.data, 1)
+                gen_feat_maps = self.gen(feat_vecs.unsqueeze(2).unsqueeze(3))
 
-            #     total += labels.size(0)
-            #     correct += (predicted == labels).sum().item()
-
-            correct = 0
-            total = 0
-            for _ in range(20):
-                samples, labels = self._sample_vecs(100)
-                samples, labels = samples.to(device), labels.to(device)
-
-                gen_feats_maps = self.gen(samples.unsqueeze(2).unsqueeze(3))
-                _, logits_cls, _ = self.disc(gen_feats_maps)
+                _, logits_cls, _ = self.disc(gen_feat_maps)
                 _, predicted = torch.max(logits_cls.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -159,7 +152,7 @@ class Prototype():
         for param_group in optimizer.param_groups:
             return param_group['lr']
 
-    def _adversarial_loss(self, outputs, is_real, criterion=nn.BCELoss(), target_real_label=REAL_LABEL, target_fake_label=FAKE_LABEL):
+    def _adversarial_loss(self, outputs, is_real, criterion=nn.BCEWithLogitsLoss(), target_real_label=REAL_LABEL, target_fake_label=FAKE_LABEL):
         real_label = torch.tensor(target_real_label)
         fake_label = torch.tensor(target_fake_label)
 
@@ -193,20 +186,7 @@ class Prototype():
             }, CLASS_FEAT_VECS_PATH)
             print("*** Features vectors saved.")
 
-    def _sample_vecs(self, batch_size):
-        vecs = []
-        vec_targets = []
-        for _ in range(batch_size):
-            label = np.random.randint(10)
-            vecs.append(torch.Tensor(self.class_feat_vecs[label][np.random.choice(
-                self.class_feat_vecs[label].shape[0], 1)][0]))
-            # vecs.append(torch.Tensor(self.class_feat_vecs[label][np.random.choice(50, 1)][0]))
-            vec_targets.append(torch.Tensor([label]))
-        vecs = torch.stack(vecs)
-        vec_targets = torch.stack(vec_targets).squeeze(1)
-        # import pdb
-        # pdb.set_trace()
-        return vecs, vec_targets
+        self._init_feat_vecs_loaders()
 
     def _load_cls(self, path=CLS_MODEL_CHECKPOINT_PATH):
         checkpoint = torch.load(path)
@@ -224,6 +204,9 @@ class Prototype():
         checkpoint = torch.load(path)
         self.class_feat_vecs = checkpoint['class_feat_vecs']
         self.class_feat_counts = checkpoint['class_feat_counts']
+
+        # Reload data loader to be comprised of the freshly loaded feature vectors
+        self._init_feat_vecs_loaders()
 
     def _train_cls(self, is_initial=False):
         if is_initial:
@@ -280,19 +263,20 @@ class Prototype():
             _loss_d, _loss_cls_real, _loss_adv_real = 0., 0., 0.
             _overall_loss = 0.
 
+            feat_vec_it = iter(self.train_feat_vecs_loader)
+
             for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
                 inputs, featmaps, targets = inputs.to(
                     device), featmaps.to(device), targets.to(device)
 
                 # Samples of fake feature vectors (inputs for generator)
-                sample_feats_vec, sample_targets = self._sample_vecs(
-                    inputs.shape[0])
-                sample_feats_vec, sample_targets = sample_feats_vec.to(
-                    device), sample_targets.to(device)
+                sample_feat_vecs, sample_targets = next(feat_vec_it)
+                sample_feat_vecs, sample_targets = sample_feat_vecs.to(
+                    device, dtype=torch.float), sample_targets.to(device)
 
                 # Generate examples
-                gen_feats_maps = self.gen(
-                    sample_feats_vec.unsqueeze(2).unsqueeze(3))
+                gen_feat_maps = self.gen(
+                    sample_feat_vecs.unsqueeze(2).unsqueeze(3))
 
                 # ================================================================================
                 #  ===== Optimize Discriminator:  max log(B(I)) + log(1 - D(G(u | m_i, covmat_i)))
@@ -301,7 +285,7 @@ class Prototype():
 
                 feats, logits_cls, p_adv = self.disc(featmaps)
                 gen_feats, gen_logits_cls, gen_logits_adv = self.disc(
-                    gen_feats_maps.detach())
+                    gen_feat_maps.detach())
 
                 ''' Classification loss '''
                 real_loss_cls = self.cls_criterion(logits_cls, targets.long())
@@ -332,8 +316,8 @@ class Prototype():
 
                 ''' Reconstruction Loss '''
                 # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
-                y = torch.ones(sample_feats_vec.shape[0]).to(device)
-                reconstr_loss = nn.CosineEmbeddingLoss()(sample_feats_vec, gen_feats, y)
+                y = torch.ones(sample_feat_vecs.shape[0]).to(device)
+                reconstr_loss = nn.CosineEmbeddingLoss()(sample_feat_vecs, gen_feats, y)
                 _reconstr_loss += reconstr_loss.mean().item()
 
                 ''' Overall Loss and Optimization '''
@@ -346,10 +330,11 @@ class Prototype():
                 # ==========================================================
                 # ===== Optimize Generator: max log(D(G(u | m_i, covmat_i)))
                 # ==========================================================
-                # TODO: Include classification loss into generator loss
+                # TODO: Try including classification loss into generator loss?
+                # TODO: Wasserstein loss?
                 self.gen.zero_grad()
                 gen_feats, gen_logits_cls, gen_logits_adv = self.disc(
-                    gen_feats_maps)
+                    gen_feat_maps)
                 gen_loss = self._adversarial_loss(
                     gen_logits_adv, True, criterion=self.adv_criterion)  # Real is set to true because we are encouraging the GAN to appear real
 
@@ -404,11 +389,15 @@ class Prototype():
         else:
             self._save_class_feat_vecs()
 
-        # 4. Alternately train G and D in an adversarial way using {X_0, {u}_0} and overall loss function
-        self._train_adv()
+        # # 4. Alternately train G and D in an adversarial way using {X_0, {u}_0} and overall loss function
+        if os.path.exists(ADV_MODEL_CHECKPOINT_PATH):
+            self._load_adv()
+            print('*** Loaded adversary model (Discriminator and Generator).')
+        else:
+            self._train_adv()
 
-        # 5. Update {m, covmat}_0, {u}_0
-        self._save_class_feat_vecs()
+        # # 5. Update {m, covmat}_0, {u}_0
+        # self._save_class_feat_vecs()
 
         # Check discriminator classification accuracy
         print("BASE-NET FEATURE MAPS CLASSIFICATION ACCURACY:",

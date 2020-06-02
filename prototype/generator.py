@@ -23,16 +23,20 @@ class Generator(nn.Module):
         if deconv:
             self.decoder = nn.Sequential(
                 # [batch, width*8, 2, 2]
-                nn.ConvTranspose2d(512, nfms*8, 4, stride=2, padding=1),
+                nn.ConvTranspose2d(512, nfms * 8, 4, stride=2, padding=1),
+                nn.BatchNorm2d(nfms * 8),
                 nn.LeakyReLU(0.2, inplace=True),
                 # [batch, width*4, 4, 4]
                 nn.ConvTranspose2d(nfms*8, 256, 4, stride=2, padding=1),
+                nn.BatchNorm2d(256),
                 nn.LeakyReLU(0.2, inplace=True),
                 # [batch, width*2, 8, 8]
                 nn.ConvTranspose2d(256, 256, 4, stride=2, padding=1),
+                nn.BatchNorm2d(256),
                 nn.LeakyReLU(0.2, inplace=True),
                 # [batch, width*1, 16, 16]
                 nn.ConvTranspose2d(256, 256, 4, stride=2, padding=1),
+                nn.BatchNorm2d(256),
                 nn.Conv2d(256, 256, kernel_size=3, stride=1,
                           padding=0),  # [batch, width*1, 14, 14]
             )

@@ -92,7 +92,7 @@ class CIFAR10_featmap(Dataset):
 
         if self.transform is not None:
             # img_224 = self.transform(img_224)
-            img_32 = self.target_transform(img_32)
+            img_32 = self.transform(img_32)
 #             target = self.target_transform(target)
 
         # return img_224, featmap, target
