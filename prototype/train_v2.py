@@ -21,10 +21,10 @@ torch.manual_seed(456)
 torch.cuda.manual_seed_all(789)
 
 # Prefer GPU
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
 # Save paths
-attempt = 3
+attempt = 2
 CLS_MODEL_CHECKPOINT_PATH = './saved_models/cls_model.sav'
 ADV_MODEL_CHECKPOINT_PATH = './saved_models/adv_model_v%s.sav' % attempt
 CLASS_FEAT_OLD_VECS_PATH = './saved_models/class_feat_vecs/class_feat_old_vecs.sav'
@@ -336,15 +336,8 @@ class Prototype():
                 total_adv_loss = disc_real_loss + disc_fake_loss
                 _loss_d += total_adv_loss.item()
 
-                ''' Reconstruction Loss '''
-                # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
-                y = torch.ones(
-                    sample_feat_vecs.shape[0], requires_grad=False).to(device)
-                reconstr_loss = nn.CosineEmbeddingLoss()(sample_feat_vecs, gen_feats, y)
-                _reconstr_loss += reconstr_loss.mean().item()
-
                 ''' Overall Loss and Optimization '''
-                loss_d = total_adv_loss + total_cls_loss + reconstr_loss
+                loss_d = total_adv_loss + total_cls_loss
                 _overall_d_loss += loss_d
 
                 loss_d.backward()
@@ -359,13 +352,11 @@ class Prototype():
                     gen_feat_maps)
 
                 ''' Classification loss '''
-                feats, logits_cls, p_adv = self.disc(featmaps)
-                real_loss_cls = self.cls_criterion(logits_cls, targets.long())
                 gen_loss_cls = self.cls_criterion(
                     gen_logits_cls, sample_targets.long())
                 _loss_cls_gen += gen_loss_cls.item()
 
-                total_cls_loss = real_loss_cls + gen_loss_cls
+                total_cls_loss = gen_loss_cls
 
                 ''' Adversarial loss '''
                 gen_loss = self._adversarial_loss(

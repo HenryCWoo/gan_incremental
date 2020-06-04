@@ -60,6 +60,7 @@ class Generator(nn.Module):
         self.output_act = nn.Tanh()
 
     def forward(self, x):
+        x = x.view(-1, 512, 1, 1)
         decoded = self.decoder(x)
         decoded = self.output_act(decoded)
         return decoded
@@ -67,3 +68,36 @@ class Generator(nn.Module):
 
 def generator(deconv=False):
     return Generator(width=32, deconv=deconv)
+
+# class Generator(nn.Module):
+#     ''' DCGAN Generator implementation '''
+
+#     def __init__(self, width=12, deconv=False):
+#         super(Generator, self).__init__()
+
+#         self.linear = nn.Linear(512, 128 * 4 * 4)
+
+#         self.decoder = nn.Sequential(
+#             nn.BatchNorm2d(128),
+#             nn.Upsample(scale_factor=2),
+#             nn.Conv2d(128, 128, 3, stride=1, padding=1),
+#             nn.BatchNorm2d(128, 0.8),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             nn.Upsample(scale_factor=2),
+#             nn.Conv2d(128, 64, 3, stride=1, padding=1),
+#             nn.BatchNorm2d(64, 0.8),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             nn.Conv2d(64, 256, 3, stride=1, padding=1)
+#         )
+#         self.output_act = nn.Tanh()
+
+#     def forward(self, x):
+#         x = self.linear(x)
+#         x = x.view(-1, 128, 4, 4)
+#         decoded = self.decoder(x)
+#         decoded = self.output_act(decoded)
+#         return decoded
+
+
+# def generator(deconv=False):
+#     return Generator()
