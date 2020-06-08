@@ -53,11 +53,11 @@ class BasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
+        # out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        out = self.bn2(out)
+        # out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -184,5 +184,39 @@ class Discriminator(nn.Module):
         return self._forward_impl(x)
 
 
-def discriminator():
-    return Discriminator(BasicBlock, [2, 2, 2, 2], tanh=False)
+class Discriminator_no_resnet(nn.Module):
+    def __init__(self, width=32):
+        super(Discriminator_no_resnet, self).__init__()
+        ndf = 32
+        self.fc_cls = nn.Linear(512, 10)
+        self.fc_adv = nn.Linear(512, 1)
+        self.main = nn.Sequential(
+            # state size. (ndf) x 14 x 14
+            nn.Conv2d(256, ndf * 2, 3, 2, 1, bias=True),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 7 x 7
+            nn.Conv2d(ndf * 2, ndf * 4, 3, 2, 1, bias=True),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 4 x 4
+            nn.Conv2d(ndf * 4, ndf * 8, 3, 2, 1, bias=True),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 2 x 2
+            nn.Conv2d(ndf * 8, ndf*16, 2, 1, 0, bias=True),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+    def forward(self, input):
+        feats = self.main(input)
+        feats = torch.flatten(feats, 1)
+        logits_cls = self.fc_cls(feats)
+        logits_adv = self.fc_adv(feats)
+        return feats, logits_cls, logits_adv
+
+
+def discriminator(type):
+    if type == 'resnet':
+        return Discriminator(BasicBlock, [2, 2, 2, 2], tanh=False)
+    elif type == 'no_resnet':
+        return Discriminator_no_resnet()
+    else:
+        raise NotImplementedError('Discriminator type not found.')
