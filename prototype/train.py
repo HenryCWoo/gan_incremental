@@ -624,7 +624,7 @@ class Prototype():
                 'gen_cls_acc': feat_vec_acc
             }
         }
-        yaml_path = os.path.join(self.BASE_PATH, 'params.yml')
+        yaml_path = os.path.join(self.BASE_PATH, 'data.yml')
         with open(yaml_path, 'r') as yamlfile:
             cur_yaml = yaml.safe_load(yamlfile)
             cur_yaml.update(acc_data)

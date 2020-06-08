@@ -55,7 +55,7 @@ def save_args(args, path):
     training_dict['gen_lr'] = args.gen_lr
     training_dict['disc_lr'] = args.disc_lr
 
-    with open(os.path.join(path, 'params.yml'), 'w') as outfile:
+    with open(os.path.join(path, 'data.yml'), 'w') as outfile:
         yaml.dump(data, outfile, default_flow_style=False)
 
 
