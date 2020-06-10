@@ -169,16 +169,16 @@ class Discriminator(nn.Module):
         # TODO: Forget about normalization for now
         # batchsizex512
         # print('feats', feats.size())
-        feats_norm = F.normalize(feats, p=2, dim=1)
+        # feats_norm = F.normalize(feats, p=2, dim=1)
         # batchsizex512
         # print('feats_norm', feats_norm.size())
         # means, covmats = self._get_mean_covmat(feats_norm)
 
-        logits_cls = self.fc_cls(feats_norm)
+        logits_cls = self.fc_cls(feats)
 
-        logits_adv = self.fc_adv(feats_norm)
+        logits_adv = self.fc_adv(feats)
 
-        return feats_norm, logits_cls, logits_adv
+        return feats, logits_cls, logits_adv
 
     def forward(self, x):
         return self._forward_impl(x)

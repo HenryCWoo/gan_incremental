@@ -31,7 +31,7 @@ EXPERIMENTS_PATH = './experiments'
 
 class Prototype():
     def __init__(self, exp_no, disc_type='no_resnet', optimizer='sgd', device=0, classes_count=10,
-                 batch_size=128, cls_lr=1e-3, cls_epochs=16, gen_lr=1e-4, disc_lr=5e-4, adv_epochs=100):
+                 batch_size=128, cls_lr=1e-3, cls_epochs=16, gen_lr=1e-4, disc_lr=5e-4, adv_epochs=100, loss='minimax'):
         # Initialize folders
         self._init_dirs(exp_no)
 
@@ -51,6 +51,7 @@ class Prototype():
         self.adv_epochs = adv_epochs
 
         # Loss functions
+        self.loss = loss
         self.cls_criterion = nn.CrossEntropyLoss()
         self.adv_criterion = nn.BCEWithLogitsLoss()
 
@@ -267,7 +268,6 @@ class Prototype():
         if dataloader is None:
             dataloader = self.test_loader
 
-        # TODO: Examine why eval mode reduces accuracy so much
         self.disc.eval()  # Turn off training mode.
         correct = 0.
         total = 0.
@@ -462,7 +462,7 @@ class Prototype():
                 self.optimizer_d.zero_grad()
 
                 feats, logits_cls, p_adv = self.disc(featmaps)
-                gen_feats, gen_logits_cls, gen_logits_adv = self.disc(
+                gen_feats, gen_logits_cls, gen_adv = self.disc(
                     gen_feat_maps.detach())
 
                 ''' Classification loss '''
@@ -478,11 +478,155 @@ class Prototype():
 
                 # Fake
                 disc_fake_loss = self._adversarial_loss(
-                    gen_logits_adv, False, criterion=self.adv_criterion)
+                    gen_adv, False, criterion=self.adv_criterion)
                 _loss_adv_gen = disc_fake_loss.item()
 
                 # Total Adversarial Loss
                 total_adv_loss = disc_real_loss + disc_fake_loss
+                _loss_d += total_adv_loss.item()
+
+                ''' Reconstruction Loss '''
+                # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
+                y = torch.ones(
+                    sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
+                reconstr_loss = nn.CosineEmbeddingLoss()(sample_feat_vecs, gen_feats, y)
+                _reconstr_loss += reconstr_loss.item()
+
+                ''' Overall Loss and Optimization '''
+                loss_d = total_adv_loss + real_loss_cls + reconstr_loss
+                _overall_d_loss += loss_d
+
+                for p in self.disc.parameters():
+                    p.data.clamp_(-0.01, 0.01)
+
+                loss_d.backward()
+                self.optimizer_d.step()
+
+                # ==========================================================
+                # ===== Optimize Generator: max log(D(G(u | m_i, covmat_i)))
+                # ==========================================================
+                # TODO: Try Wasserstein loss?
+                self.optimizer_g.zero_grad()
+                gen_feats, gen_logits_cls, gen_adv = self.disc(
+                    gen_feat_maps)
+
+                ''' Classification loss '''
+                gen_loss_cls = self.cls_criterion(
+                    gen_logits_cls, sample_targets.long())
+                _loss_cls_gen += gen_loss_cls.item()
+
+                ''' Adversarial loss '''
+                gen_loss = self._adversarial_loss(
+                    gen_adv, True, criterion=self.adv_criterion)  # Real is set to true because we are encouraging the GAN to appear real
+                _loss_g += gen_loss.item()
+
+                ''' Overall Loss and Optimization '''
+                total_gen_loss = gen_loss + gen_loss_cls
+                _overall_g_loss += total_gen_loss
+
+                for p in self.gen.parameters():
+                    p.data.clamp_(-0.01, 0.01)
+
+                total_gen_loss.backward()
+                self.optimizer_g.step()
+
+                if batch_idx % 100 == 99:    # print every 100 mini-batches
+                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\n' %
+                          (epoch + 1, batch_idx + 1, _loss_g / 100, _loss_d / 100, _loss_cls_gen / 100, _loss_cls_real / 100, _loss_adv_gen / 100, _loss_adv_real / 100, _reconstr_loss / 100, _overall_g_loss / 100, _overall_d_loss / 100))
+
+                    # Store information for plotting
+                    self._update_learning_adv_prog([_loss_g / 100,
+                                                    _loss_cls_gen / 100,
+                                                    _loss_adv_gen / 100,
+                                                    _overall_g_loss / 100,
+                                                    _loss_d / 100,
+                                                    _loss_cls_real / 100,
+                                                    _loss_adv_real / 100,
+                                                    _overall_d_loss / 100,
+                                                    _reconstr_loss / 100])
+
+                    _loss_g, _loss_cls_gen, _loss_adv_gen, _reconstr_loss = 0., 0., 0., 0.
+                    _loss_d, _loss_cls_real, _loss_adv_real = 0., 0., 0.
+                    _overall_g_loss, _overall_d_loss = 0., 0.
+
+                if batch_idx % 250 == 249:  # print every 250 mini-batches
+                    # Visually inspect feature maps
+                    if visualize:
+                        self.visualize_featmap(
+                            featmaps[0],
+                            sample_feat_vecs[0],
+                            gen_feats[0],
+                            gen_feat_maps[0],
+                            out_dir=self.SAVE_FEATS_PATH + '/epoch' + str(epoch+1) + '_batch_' + str(batch_idx+1) + ".jpg")
+
+            self.scheduler_g.step()
+            self.scheduler_d.step()
+
+            self._save_adv_progress()
+
+            if epoch % 5 == 4:
+                torch.save({
+                    'disc_state_dict': self.disc.state_dict(),
+                    'gen_state_dict': self.gen.state_dict(),
+                    'optimizer_d_state_dict': self.optimizer_d.state_dict(),
+                    'optimizer_g_state_dict': self.optimizer_g.state_dict(),
+                    'scheduler_d_state_dict': self.scheduler_d.state_dict(),
+                    'scheduler_g_state_dict': self.scheduler_g.state_dict(),
+                    'epoch': epoch  # TODO: This variable is not being used to pick up from where we left off
+                }, self.ADV_MODEL_CHECKPOINT_PATH)
+                print("Model saved.")
+
+                print("BASE-NET FEATURE MAPS CLASSIFICATION ACCURACY:",
+                      self._get_disc_cls_acc())
+
+                print("DISC FEATURE VECTORS CLASSIFICATION ACCURACY:",
+                      self._get_disc_cls_acc_gen())
+
+                self.disc.train()
+                self.gen.train()
+
+    def _train_adv_wass(self, visualize=True):
+        print("*** Wasserstein Adversarial Training...")
+        self.disc.train()
+        self.gen.train()
+
+        for epoch in range(self.adv_epochs):
+            _loss_g, _loss_cls_gen, _loss_adv_gen, _reconstr_loss = 0., 0., 0., 0.
+            _loss_d, _loss_cls_real, _loss_adv_real = 0., 0., 0.
+            _overall_g_loss, _overall_d_loss = 0., 0.
+
+            feat_vec_it = iter(self.train_feat_vecs_loader)
+
+            for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
+                inputs, featmaps, targets = inputs.to(
+                    self.device), featmaps.to(self.device), targets.to(self.device)
+
+                # Samples of fake feature vectors (inputs for generator)
+                sample_feat_vecs, sample_targets = next(feat_vec_it)
+                sample_feat_vecs, sample_targets = sample_feat_vecs.to(
+                    self.device, dtype=torch.float), sample_targets.to(self.device)
+
+                # Generate examples
+                gen_feat_maps = self.gen(sample_feat_vecs)
+
+                # ================================================================================
+                #  ===== Optimize Discriminator:  max log(B(I)) + log(1 - D(G(u | m_i, covmat_i)))
+                # ================================================================================
+                self.optimizer_d.zero_grad()
+
+                feats, logits_cls, p_adv = self.disc(featmaps)
+                gen_feats, gen_logits_cls, gen_adv = self.disc(
+                    gen_feat_maps.detach())
+
+                ''' Classification loss '''
+                real_loss_cls = self.cls_criterion(logits_cls, targets.long())
+                _loss_cls_real += real_loss_cls.item()
+
+                ''' Adversarial loss '''
+                total_adv_loss = -(torch.mean(p_adv) -
+                                   torch.mean(gen_adv))  # Wasserstein Loss
+                for p in self.disc.parameters():
+                    p.data.clamp_(-0.01, 0.01)
                 _loss_d += total_adv_loss.item()
 
                 ''' Reconstruction Loss '''
@@ -502,9 +646,8 @@ class Prototype():
                 # ==========================================================
                 # ===== Optimize Generator: max log(D(G(u | m_i, covmat_i)))
                 # ==========================================================
-                # TODO: Try Wasserstein loss?
                 self.optimizer_g.zero_grad()
-                gen_feats, gen_logits_cls, gen_logits_adv = self.disc(
+                gen_feats, gen_logits_cls, gen_adv = self.disc(
                     gen_feat_maps)
 
                 ''' Classification loss '''
@@ -513,8 +656,7 @@ class Prototype():
                 _loss_cls_gen += gen_loss_cls.item()
 
                 ''' Adversarial loss '''
-                gen_loss = self._adversarial_loss(
-                    gen_logits_adv, True, criterion=self.adv_criterion)  # Real is set to true because we are encouraging the GAN to appear real
+                gen_loss = -torch.mean(gen_adv)
                 _loss_g += gen_loss.item()
 
                 ''' Overall Loss and Optimization '''
@@ -607,7 +749,10 @@ class Prototype():
             self._load_adv()
             print('*** Loaded adversary model (Discriminator and Generator).')
         else:
-            self._train_adv()
+            if self.loss == 'wass':
+                self._train_adv_wass()
+            else:
+                self._train_adv()
 
         # # 5. (TODO: Worry about further steps from here during incremental learning) Update {m, covmat}_0, {u}_0
         # self._save_class_feat_vecs(CLASS_FEAT_NEW_VECS_PATH)
@@ -632,3 +777,48 @@ class Prototype():
         if cur_yaml:
             with open(yaml_path, 'w') as yamlfile:
                 yaml.safe_dump(cur_yaml, yamlfile)  # Also note the safe_dump
+
+    def train_2(self):
+
+        # Get generator from adversarial training
+        self._load_adv()
+        self._load_class_feat_vecs(self.CLASS_FEAT_OLD_VECS_PATH)
+        print('Test BNet acc:', self._get_disc_cls_acc())
+        print('Test feat vecs acc:', self._get_disc_cls_acc_gen())
+
+        self.gen.train()
+        disc_2 = discriminator('no_resnet').to(self.device)
+        disc_2.train()
+        cls_optimizer_2 = optim.Adam(
+            disc_2.parameters(), lr=self.cls_lr, betas=(0.5, 0.999))
+        cls_scheduler_2 = optim.lr_scheduler.StepLR(
+            cls_optimizer_2, step_size=8, gamma=0.1)
+
+        for epoch in range(self.cls_epochs):
+            _loss_cls = 0.
+            for batch_idx, (feat_vec, targets) in enumerate(tqdm(self.train_feat_vecs_loader)):
+                feat_vec, targets = feat_vec.to(
+                    self.device), targets.to(self.device)
+
+                cls_optimizer_2.zero_grad()
+                gen_feat_maps = self.gen(feat_vec)
+                feats, logits_cls, _ = disc_2(gen_feat_maps.detach())
+
+                # Only train discriminator on classification
+                # No adversarial training here
+                loss_cls = self.cls_criterion(logits_cls, targets.long())
+                loss_cls.backward()
+                cls_optimizer_2.step()
+
+                _loss_cls += loss_cls.item()
+                if batch_idx % 100 == 99:    # print every 100 mini-batches
+                    print('\n\n[CLS TRAINING 2] EPOCH %d, MINI-BATCH %5d LR: %f loss: %.5f' %
+                          (epoch + 1, batch_idx + 1, self._get_lr(cls_optimizer_2), _loss_cls / 100))
+                    _loss_cls = 0.0
+
+            cls_scheduler_2.step()
+        print("*** Finished training discriminator for classification.")
+
+        self.disc = disc_2
+        print('Test BNet acc:', self._get_disc_cls_acc())
+        print('Test feat vecs acc:', self._get_disc_cls_acc_gen())

@@ -26,9 +26,12 @@ parser.add_argument("--disc_lr", type=float, default=5e-4,
                     help="learning rate")
 parser.add_argument("--optimizer", type=str, default="adam",
                     help="options=[sgd, adam]")
+parser.add_argument("--loss", type=str, default="minimax",
+                    help="options=[minimax, wass]")
 # parser.add_argument("--scheduler", action="store_true", default=False)
 
 # Misc
+parser.add_argument("--train_2", action="store_true", default=False)
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--exp_no', type=int, default=-1)
 
@@ -54,6 +57,7 @@ def save_args(args, path):
     training_dict['cls_lr'] = args.cls_lr
     training_dict['gen_lr'] = args.gen_lr
     training_dict['disc_lr'] = args.disc_lr
+    training_dict['loss'] = args.loss
 
     with open(os.path.join(path, 'data.yml'), 'w') as outfile:
         yaml.dump(data, outfile, default_flow_style=False)
@@ -94,5 +98,10 @@ if __name__ == '__main__':
                       cls_epochs=args.cls_epochs,
                       gen_lr=args.gen_lr,
                       disc_lr=args.disc_lr,
-                      adv_epochs=args.adv_epochs)
-    model.train()
+                      adv_epochs=args.adv_epochs,
+                      loss=args.loss)
+
+    if args.train_2:
+        model.train_2()
+    else:
+        model.train()
