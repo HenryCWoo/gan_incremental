@@ -24,14 +24,16 @@ parser.add_argument("--gen_lr", type=float, default=1e-4,
                     help="learning rate")
 parser.add_argument("--disc_lr", type=float, default=5e-4,
                     help="learning rate")
-parser.add_argument("--optimizer", type=str, default="adam",
-                    help="options=[sgd, adam]")
+parser.add_argument("--optimizer", type=str, default="sgd",
+                    help="options=[sgd, adam, rmsprop]")
 parser.add_argument("--loss", type=str, default="minimax",
                     help="options=[minimax, wass]")
+parser.add_argument("--l2_norm", action="store_true", default=False,
+                    help="Add l2 normalization layer in discriminator.")
 # parser.add_argument("--scheduler", action="store_true", default=False)
 
 # Misc
-parser.add_argument("--train_2", action="store_true", default=False)
+parser.add_argument("--rev_train_cls", action="store_true", default=False)
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--exp_no', type=int, default=-1)
 
@@ -58,6 +60,7 @@ def save_args(args, path):
     training_dict['gen_lr'] = args.gen_lr
     training_dict['disc_lr'] = args.disc_lr
     training_dict['loss'] = args.loss
+    training_dict['l2_norm'] = args.l2_norm
 
     with open(os.path.join(path, 'data.yml'), 'w') as outfile:
         yaml.dump(data, outfile, default_flow_style=False)
@@ -86,6 +89,8 @@ if __name__ == '__main__':
     if args.exp_no == -1:
         exp_no = increm_experiment_dir(args)
     else:
+        if not os.path.exists(os.path.join(EXPERIMENTS_PATH, str(args.exp_no))):
+            raise NotADirectoryError('Experiment number not found.')
         exp_no = args.exp_no
 
     model = Prototype(exp_no,
@@ -99,9 +104,10 @@ if __name__ == '__main__':
                       gen_lr=args.gen_lr,
                       disc_lr=args.disc_lr,
                       adv_epochs=args.adv_epochs,
-                      loss=args.loss)
+                      loss=args.loss,
+                      l2_norm=args.l2_norm)
 
-    if args.train_2:
-        model.train_2()
+    if args.rev_train_cls:
+        model.rev_train_cls()
     else:
         model.train()

@@ -75,8 +75,9 @@ class Discriminator(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, tanh=False):
+                 norm_layer=None, tanh=False, l2_norm=False):
         super(Discriminator, self).__init__()
+        self.l2_norm = l2_norm
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -169,7 +170,8 @@ class Discriminator(nn.Module):
         # TODO: Forget about normalization for now
         # batchsizex512
         # print('feats', feats.size())
-        # feats_norm = F.normalize(feats, p=2, dim=1)
+        if self.l2_norm:
+            feats = F.normalize(feats, p=2, dim=1)
         # batchsizex512
         # print('feats_norm', feats_norm.size())
         # means, covmats = self._get_mean_covmat(feats_norm)
@@ -185,9 +187,10 @@ class Discriminator(nn.Module):
 
 
 class Discriminator_no_resnet(nn.Module):
-    def __init__(self, width=32):
+    def __init__(self, width=32, l2_norm=False):
         super(Discriminator_no_resnet, self).__init__()
         ndf = 32
+        self.l2_norm = l2_norm
         self.fc_cls = nn.Linear(512, 10)
         self.fc_adv = nn.Linear(512, 1)
         self.main = nn.Sequential(
@@ -208,15 +211,19 @@ class Discriminator_no_resnet(nn.Module):
     def forward(self, input):
         feats = self.main(input)
         feats = torch.flatten(feats, 1)
+
+        if self.l2_norm:
+            feats = F.normalize(feats, p=2, dim=1)
+
         logits_cls = self.fc_cls(feats)
         logits_adv = self.fc_adv(feats)
         return feats, logits_cls, logits_adv
 
 
-def discriminator(type):
+def discriminator(type, l2_norm=False):
     if type == 'resnet':
-        return Discriminator(BasicBlock, [2, 2, 2, 2], tanh=False)
+        return Discriminator(BasicBlock, [2, 2, 2, 2], tanh=False, l2_norm=l2_norm)
     elif type == 'no_resnet':
-        return Discriminator_no_resnet()
+        return Discriminator_no_resnet(l2_norm=l2_norm)
     else:
         raise NotImplementedError('Discriminator type not found.')

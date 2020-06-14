@@ -7,10 +7,12 @@ import pandas as pd
 all_results = []
 
 for yaml_path in Path('./experiments').glob('**/*.yml'):
+    exp_no = yaml_path.parent
+
     with open(yaml_path, 'r') as yamlfile:
         cur_yaml = yaml.safe_load(yamlfile)
 
-    data = {}
+    data = {'experiment': exp_no}
 
     for k, v in cur_yaml.items():
         if isinstance(v, dict):
