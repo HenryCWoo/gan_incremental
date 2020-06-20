@@ -53,11 +53,11 @@ class BasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        # out = self.bn1(out)
+        out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        # out = self.bn2(out)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -67,6 +67,68 @@ class BasicBlock(nn.Module):
             out = nn.Tanh()(out)
         else:
             out = self.relu(out)
+
+        return out
+
+
+class LargeBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
+                 base_width=64, dilation=1, norm_layer=None, tanh=False):
+        super(LargeBlock, self).__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        if groups != 1 or base_width != 64:
+            raise ValueError(
+                'BasicBlock only supports groups=1 and base_width=64')
+        if dilation > 1:
+            raise NotImplementedError(
+                "Dilation > 1 not supported in BasicBlock")
+        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        self.lrelu = nn.LeakyReLU(0.2, inplace=True)
+
+        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = norm_layer(planes)
+        self.conv3 = conv3x3(planes, planes)
+        self.bn3 = norm_layer(planes)
+        self.conv3 = conv3x3(planes, planes)
+        self.bn4 = norm_layer(planes)
+        self.conv4 = conv3x3(planes, planes)
+
+        self.downsample = downsample
+        self.stride = stride
+        self.tanh = tanh
+
+    def forward(self, x):
+        identity = x
+
+        out = self.conv1(x)
+        out = self.lrelu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.lrelu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.lrelu(out)
+
+        out = self.conv3(out)
+        out = self.bn4(out)
+        out = self.lrelu(out)
+
+        out = self.conv4(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        if self.tanh:
+            out = nn.Tanh()(out)
+        else:
+            out = self.lrelu(out)
 
         return out
 
@@ -196,15 +258,19 @@ class Discriminator_no_resnet(nn.Module):
         self.main = nn.Sequential(
             # state size. (ndf) x 14 x 14
             nn.Conv2d(256, ndf * 2, 3, 2, 1, bias=True),
+            nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*2) x 7 x 7
             nn.Conv2d(ndf * 2, ndf * 4, 3, 2, 1, bias=True),
+            nn.BatchNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*4) x 4 x 4
             nn.Conv2d(ndf * 4, ndf * 8, 3, 2, 1, bias=True),
+            nn.BatchNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*8) x 2 x 2
-            nn.Conv2d(ndf * 8, ndf*16, 2, 1, 0, bias=True),
+            nn.Conv2d(ndf * 8, ndf * 16, 2, 1, 0, bias=True),
+            nn.BatchNorm2d(ndf * 16),
             nn.LeakyReLU(0.2, inplace=True),
         )
 
@@ -223,6 +289,8 @@ class Discriminator_no_resnet(nn.Module):
 def discriminator(type, l2_norm=False):
     if type == 'resnet':
         return Discriminator(BasicBlock, [2, 2, 2, 2], tanh=False, l2_norm=l2_norm)
+    elif type == 'resnet_large':
+        return Discriminator(LargeBlock, [2, 2, 2, 2], tanh=False, l2_norm=l2_norm)
     elif type == 'no_resnet':
         return Discriminator_no_resnet(l2_norm=l2_norm)
     else:

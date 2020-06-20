@@ -8,7 +8,9 @@ parser = argparse.ArgumentParser()
 
 # Model
 parser.add_argument("--disc", type=str, default="no_resnet",
-                    help="type of discriminator | options=[resnet, no_resnet]")
+                    help="type of discriminator | options=[resnet, resnet_large, no_resnet]")
+parser.add_argument("--gen", type=str, default="no_bn",
+                    help="type of generator | options=[no_bn, bn]")
 parser.add_argument("--deconv", action="store_true", default=False)
 
 # Training
@@ -36,6 +38,8 @@ parser.add_argument("--l2_norm", action="store_true", default=False,
 parser.add_argument("--rev_train_cls", action="store_true", default=False)
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--exp_no', type=int, default=-1)
+parser.add_argument('--note', type=str,
+                    help="Add notes to describe experiment")
 
 args = parser.parse_args()
 
@@ -50,6 +54,7 @@ def save_args(args, path):
     model_dict['disc'] = args.disc
     model_dict['optim'] = args.optimizer
     model_dict['deconv'] = args.deconv
+    model_dict['gen'] = args.gen
 
     data['training'] = dict()
     training_dict = data['training']
@@ -61,6 +66,8 @@ def save_args(args, path):
     training_dict['disc_lr'] = args.disc_lr
     training_dict['loss'] = args.loss
     training_dict['l2_norm'] = args.l2_norm
+
+    data['note'] = args.note
 
     with open(os.path.join(path, 'data.yml'), 'w') as outfile:
         yaml.dump(data, outfile, default_flow_style=False)
@@ -78,7 +85,6 @@ def increm_experiment_dir(args):
     next_exp_dir = os.path.join(EXPERIMENTS_PATH, str(next_exp))
     if not os.path.exists(next_exp_dir):
         os.mkdir(next_exp_dir)
-    save_args(args, next_exp_dir)
     return next_exp
 
 
@@ -86,12 +92,17 @@ if __name__ == '__main__':
     # Prepare path to save experiments
     if not os.path.exists(EXPERIMENTS_PATH):
         os.mkdir(EXPERIMENTS_PATH)
+
     if args.exp_no == -1:
         exp_no = increm_experiment_dir(args)
     else:
         if not os.path.exists(os.path.join(EXPERIMENTS_PATH, str(args.exp_no))):
             raise NotADirectoryError('Experiment number not found.')
         exp_no = args.exp_no
+
+    # Save hyperparameters
+    next_exp_dir = os.path.join(EXPERIMENTS_PATH, str(exp_no))
+    save_args(args, next_exp_dir)
 
     model = Prototype(exp_no,
                       disc_type=args.disc,
