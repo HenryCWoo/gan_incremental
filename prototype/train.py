@@ -27,7 +27,8 @@ EXPERIMENTS_PATH = './experiments'
 
 class Prototype():
     def __init__(self, exp_no, disc_type='no_resnet', gen_type='no_bn', optimizer='sgd', device=0, classes_count=10,
-                 batch_size=128, cls_lr=1e-3, cls_epochs=16, gen_lr=1e-4, disc_lr=5e-4, adv_epochs=100, loss='minimax', l2_norm=False):
+                 batch_size=128, cls_lr=1e-3, cls_epochs=16, gen_lr=1e-4, disc_lr=5e-4, adv_epochs=100, loss='minimax',
+                 l2_norm=False, latent_vec_recon_coeff=10, latent_var_recon_coeff=100):
         # Initialize folders
         self._init_dirs(exp_no)
 
@@ -39,6 +40,10 @@ class Prototype():
         self.gen = generator(gen_type, deconv=False).to(self.device)
 
         # Hyperparameters
+        self.disc_type = disc_type
+        self.gen_type = gen_type
+        self.optim = optimizer
+
         self.batch_size = batch_size
         self.cls_lr = cls_lr
         self.cls_epochs = cls_epochs
@@ -56,6 +61,8 @@ class Prototype():
 
         # Loss functions
         self.loss = loss
+        self.latent_var_recon_coeff = latent_var_recon_coeff
+        self.latent_vec_recon_coeff = latent_vec_recon_coeff
         self.cls_criterion = nn.CrossEntropyLoss()
         self.adv_criterion = nn.BCEWithLogitsLoss()
 
@@ -76,7 +83,7 @@ class Prototype():
         # Track adv learning progress
         self.gen_loss_plot, self.cls_gen_loss_plot, self.adv_gen_loss_plot, self.overall_g_loss_plot = [], [], [], []
         self.disc_loss_plot, self.cls_real_loss_plot, self.adv_real_loss_plot, self.overall_d_loss_plot = [], [], [], []
-        self.reconstr_loss_plot = []
+        self.latent_var_loss_plot, self.latent_vec_loss_plot = [], []
 
     def _init_dirs(self, exp_no):
         def mkdir(path):
@@ -110,7 +117,8 @@ class Prototype():
         self.cls_real_loss_plot.append(losses[5])
         self.adv_real_loss_plot.append(losses[6])
         self.overall_d_loss_plot.append(losses[7])
-        self.reconstr_loss_plot.append(losses[8])
+        self.latent_var_loss_plot.append(losses[8])
+        self.latent_vec_loss_plot.append(losses[9])
 
     def _save_adv_progress(self, path=None):
         if path is None:
@@ -144,9 +152,17 @@ class Prototype():
         plt.close()
 
         plt.figure()
-        plt.plot(self.reconstr_loss_plot, label='reconstr_loss')
+        plt.plot(self.latent_var_loss_plot,
+                 label='latent_var_recon_loss')
         plt.legend()
-        plt.savefig(path + '/reconstr_loss.jpg')
+        plt.savefig(path + '/latent_var_recon_loss.jpg')
+        plt.close()
+
+        plt.figure()
+        plt.plot(self.latent_vec_loss_plot,
+                 label='latent_vec_recon_loss')
+        plt.legend()
+        plt.savefig(path + '/latent_vec_recon_loss.jpg')
         plt.close()
 
         plt.figure()
@@ -162,12 +178,15 @@ class Prototype():
         plt.plot(self.overall_g_loss_plot, label='overall_g_loss')
         plt.plot(self.overall_d_loss_plot, label='overall_d_loss')
 
-        plt.plot(self.reconstr_loss_plot, label='reconstr_loss')
+        plt.plot(self.latent_var_loss_plot,
+                 label='latent_var_recon_loss')
+        plt.plot(self.latent_vec_loss_plot,
+                 label='latent_vec_recon_loss')
         plt.legend()
         plt.savefig(path + '/combined.jpg')
         plt.close()
 
-    def visualize_featmap(self, featmaps, feat_vec, reconstr_feat_vec, gen_image, out_dir=None, show=False, num_examples=10):
+    def visualize_featmap(self, feat_maps, feat_vec, reconstr_feat_vec, gen_image, out_dir=None, show=False, num_examples=10):
         if out_dir is None:
             out_dir = self.SAVE_FEATS_PATH
 
@@ -187,7 +206,7 @@ class Prototype():
         for j in range(num_examples):
             plt.subplot(3, num_examples, j+1)
             plt.imshow(
-                (featmaps[j].detach().cpu().numpy()+1.)/2)
+                (feat_maps[j].detach().cpu().numpy()+1.)/2)
             plt.axis('off')
 
             plt.subplot(3, num_examples, (num_examples*2)+j+1)
@@ -281,10 +300,10 @@ class Prototype():
         print("*** Evaluating discriminator classification on base-net feature maps.")
         with torch.no_grad():
             for _, data in enumerate(tqdm(dataloader)):
-                featmaps, labels = data[1].to(self.device), data[2].to(
-                    self.device)  # data[1] = featmaps | data[2] = label
+                feat_maps, labels = data[1].to(self.device), data[2].to(
+                    self.device)  # data[1] = feat_maps | data[2] = label
 
-                _, logits_cls, _ = self.disc(featmaps)
+                _, logits_cls, _ = self.disc(feat_maps)
                 _, predicted = torch.max(logits_cls.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
@@ -339,10 +358,10 @@ class Prototype():
         # Reset buffer
         self.train_class_feat_vecs = [[] for _ in range(self.classes_count)]
 
-        for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
-            featmaps, targets = featmaps.to(
+        for batch_idx, (inputs, feat_maps, targets) in enumerate(tqdm(self.train_loader)):
+            feat_maps, targets = feat_maps.to(
                 self.device), targets.to(self.device)
-            feats, _, _ = self.disc(featmaps)
+            feats, _, _ = self.disc(feat_maps)
 
             for i, target in enumerate(targets.detach().cpu().numpy().astype(int)):
                 self.train_class_feat_vecs[target].append(
@@ -350,10 +369,10 @@ class Prototype():
         self.train_class_feat_vecs = np.array(self.train_class_feat_vecs)
 
         self.test_class_feat_vecs = [[] for _ in range(self.classes_count)]
-        for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.test_loader)):
-            featmaps, targets = featmaps.to(
+        for batch_idx, (inputs, feat_maps, targets) in enumerate(tqdm(self.test_loader)):
+            feat_maps, targets = feat_maps.to(
                 self.device), targets.to(self.device)
-            feats, _, _ = self.disc(featmaps)
+            feats, _, _ = self.disc(feat_maps)
 
             for i, target in enumerate(targets.detach().cpu().numpy().astype(int)):
                 self.test_class_feat_vecs[target].append(
@@ -376,20 +395,29 @@ class Prototype():
         self.disc.load_state_dict(checkpoint['disc_state_dict'])
         self.cls_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-    def _load_adv(self, path=None):
+    def _load_adv(self, path=None, load_disc=True, load_gen=True):
         if path is None:
             path = self.ADV_MODEL_CHECKPOINT_PATH
         checkpoint = torch.load(path)
-        self.disc.load_state_dict(checkpoint['disc_state_dict'])
-        self.gen.load_state_dict(checkpoint['gen_state_dict'])
-        self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
-        self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
-        self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
-        self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
+
+        # User can choose to use the saved discriminator or train a new one (used in rev_train_cls)
+        if load_disc:
+            self.disc.load_state_dict(checkpoint['disc_state_dict'])
+            self.optimizer_d.load_state_dict(
+                checkpoint['optimizer_d_state_dict'])
+            self.scheduler_d.load_state_dict(
+                checkpoint['scheduler_d_state_dict'])
+
+        if load_gen:
+            self.gen.load_state_dict(checkpoint['gen_state_dict'])
+            self.optimizer_g.load_state_dict(
+                checkpoint['optimizer_g_state_dict'])
+            self.scheduler_g.load_state_dict(
+                checkpoint['scheduler_g_state_dict'])
 
         (self.gen_loss_plot, self.cls_gen_loss_plot, self.adv_gen_loss_plot, self.overall_g_loss_plot,
             self.disc_loss_plot, self.cls_real_loss_plot, self.adv_real_loss_plot, self.overall_d_loss_plot,
-            self.reconstr_loss_plot) = checkpoint['loss_progress']
+            self.latent_var_loss_plot, self.latent_vec_loss_plot) = checkpoint['loss_progress']
 
         return checkpoint['epoch']
 
@@ -416,12 +444,12 @@ class Prototype():
 
         for epoch in range(self.cls_epochs):
             _loss_cls = 0.
-            for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
-                featmaps, targets = featmaps.to(
+            for batch_idx, (inputs, feat_maps, targets) in enumerate(tqdm(self.train_loader)):
+                feat_maps, targets = feat_maps.to(
                     self.device), targets.to(self.device)
 
                 self.cls_optimizer.zero_grad()
-                feats, logits_cls, _ = self.disc(featmaps)
+                feats, logits_cls, _ = self.disc(feat_maps)
 
                 # Only train discriminator on classification
                 # No adversarial training here
@@ -461,15 +489,15 @@ class Prototype():
                 'gen_loss': 0., 'disc_loss': 0.,
                 'cls_gen_loss': 0., 'cls_real_loss': 0.,
                 'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                'reconstr_loss': 0.,
+                'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
                 'overall_g_loss': 0.,  'overall_d_loss': 0.
             }
 
             feat_vec_it = iter(self.train_feat_vecs_loader)
 
-            for batch_idx, (inputs, featmaps, targets) in enumerate(tqdm(self.train_loader)):
-                inputs, featmaps, targets = inputs.to(
-                    self.device), featmaps.to(self.device), targets.to(self.device)
+            for batch_idx, (inputs, feat_maps, targets) in enumerate(tqdm(self.train_loader)):
+                inputs, feat_maps, targets = inputs.to(
+                    self.device), feat_maps.to(self.device), targets.to(self.device)
 
                 # Samples of fake feature vectors (inputs for generator)
                 sample_feat_vecs, gen_targets = next(feat_vec_it)
@@ -484,7 +512,7 @@ class Prototype():
                 # ================================================================================
                 self.optimizer_d.zero_grad()
 
-                feats, logits_cls, p_adv = self.disc(featmaps)
+                feats, logits_cls, p_adv = self.disc(feat_maps)
                 gen_feats, gen_logits_cls, gen_adv = self.disc(
                     gen_feat_maps.detach())
 
@@ -508,16 +536,17 @@ class Prototype():
                 total_adv_loss = disc_real_loss + disc_fake_loss
                 losses['disc_loss'] += total_adv_loss.item()
 
-                ''' Reconstruction Loss '''
+                ''' Latent Variable Reconstruction Loss '''
                 # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
                 y = torch.ones(
                     sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
-                reconstr_loss = nn.CosineEmbeddingLoss()(
-                    sample_feat_vecs, gen_feats, y)
-                losses['reconstr_loss'] += reconstr_loss.item()
+                latent_var_recon_loss = nn.CosineEmbeddingLoss()(
+                    sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
+                losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
                 ''' Overall Loss and Optimization '''
-                loss_d = total_adv_loss + real_loss_cls + reconstr_loss
+                loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
+                # loss_d = total_adv_loss + real_loss_cls
                 losses['overall_d_loss'] += loss_d
 
                 # Gradient Clipping
@@ -543,16 +572,22 @@ class Prototype():
                     gen_adv, True, criterion=self.adv_criterion)  # Real is set to true because we are encouraging the GAN to appear real
                 losses['gen_loss'] += gen_loss.item()
 
-                ''' Reconstruction Loss '''
+                ''' Latent Variable Reconstruction Loss '''
                 # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
                 y = torch.ones(
                     sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
-                reconstr_loss = nn.CosineEmbeddingLoss()(
-                    sample_feat_vecs, gen_feats, y)
-                losses['reconstr_loss'] += reconstr_loss.item()
+                latent_var_recon_loss = nn.CosineEmbeddingLoss()(
+                    sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
+                losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
+
+                ''' Latent Vector Reconstruction Loss '''
+                latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
+                    self.latent_vec_recon_coeff
+                losses['latent_vec_recon_loss'] = latent_vec_recon_loss.item()
 
                 ''' Overall Loss and Optimization '''
-                total_gen_loss = gen_loss + gen_loss_cls + reconstr_loss
+                total_gen_loss = gen_loss + gen_loss_cls + \
+                    latent_var_recon_loss + latent_vec_recon_loss
                 losses['overall_g_loss'] += total_gen_loss
 
                 # Gradient clipping
@@ -563,14 +598,15 @@ class Prototype():
                 self.optimizer_g.step()
 
                 if batch_idx % 100 == 99:    # print every 100 mini-batches
-                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\ng_lr     : %.8f d_lr     : %.8f\n' %
+                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nlatent_var_recon_loss: %.5f latent_vec_recon_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\ng_lr     : %.8f d_lr     : %.8f\n' %
                           (epoch + 1, batch_idx + 1,
                            losses['gen_loss'] / 100, losses['disc_loss'] / 100,
                            losses['cls_gen_loss'] /
                            100, losses['cls_real_loss'] / 100,
                            losses['adv_gen_loss'] /
                            100, losses['adv_real_loss'] / 100,
-                           losses['reconstr_loss'] / 100,
+                           losses['latent_var_recon_loss'] / 100,
+                           losses['latent_vec_recon_loss'] / 100,
                            losses['overall_g_loss'] /
                            100, losses['overall_d_loss'] / 100,
                            self._get_lr(self.optimizer_g), self._get_lr(self.optimizer_d)))
@@ -584,13 +620,14 @@ class Prototype():
                                                     losses['cls_real_loss'] / 100,
                                                     losses['adv_real_loss'] / 100,
                                                     losses['overall_d_loss'] / 100,
-                                                    losses['reconstr_loss'] / 100])
+                                                    losses['latent_var_recon_loss'] / 100,
+                                                    losses['latent_vec_recon_loss'] / 100])
 
                     losses = {
                         'gen_loss': 0., 'disc_loss': 0.,
                         'cls_gen_loss': 0., 'cls_real_loss': 0.,
                         'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                        'reconstr_loss': 0.,
+                        'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
                         'overall_g_loss': 0.,  'overall_d_loss': 0.
                     }
 
@@ -598,7 +635,7 @@ class Prototype():
                     # Visually inspect feature maps
                     if visualize:
                         self.visualize_featmap(
-                            featmaps[0],
+                            feat_maps[0],
                             sample_feat_vecs[0],
                             gen_feats[0],
                             gen_feat_maps[0],
@@ -619,7 +656,7 @@ class Prototype():
                 'epoch': epoch,
                 'loss_progress': (self.gen_loss_plot, self.cls_gen_loss_plot, self.adv_gen_loss_plot, self.overall_g_loss_plot,
                                   self.disc_loss_plot, self.cls_real_loss_plot, self.adv_real_loss_plot, self.overall_d_loss_plot,
-                                  self.reconstr_loss_plot)
+                                  self.latent_var_loss_plot, self.latent_vec_loss_plot)
             }, self.ADV_MODEL_CHECKPOINT_PATH)
             print("Model saved.")
 
@@ -644,7 +681,7 @@ class Prototype():
                 'gen_loss': 0., 'disc_loss': 0.,
                 'cls_gen_loss': 0., 'cls_real_loss': 0.,
                 'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                'reconstr_loss': 0.,
+                'latent_var_recon_loss': 0.,
                 'overall_g_loss': 0.,  'overall_d_loss': 0.
             }
 
@@ -658,12 +695,12 @@ class Prototype():
                 critic_iter_count = 0
                 while critic_iter_count < 5 and batch_idx < len(feat_map_it):
                     critic_iter_count += 1
-                    inputs, featmaps, targets = next(feat_map_it)
+                    inputs, feat_maps, targets = next(feat_map_it)
                     sample_feat_vecs, gen_targets = next(feat_vec_it)
                     batch_idx += 1  # Counts how many more batches were seen
 
-                    inputs, featmaps, targets = inputs.to(
-                        self.device), featmaps.to(self.device), targets.to(self.device)
+                    inputs, feat_maps, targets = inputs.to(
+                        self.device), feat_maps.to(self.device), targets.to(self.device)
                     # Samples of fake feature vectors (inputs for generator)
                     sample_feat_vecs, gen_targets = sample_feat_vecs.to(
                         self.device, dtype=torch.float), gen_targets.to(self.device)
@@ -676,7 +713,7 @@ class Prototype():
                     # ==========================================================
                     self.optimizer_d.zero_grad()
 
-                    feats, logits_cls, p_adv = self.disc(featmaps)
+                    feats, logits_cls, p_adv = self.disc(feat_maps)
                     gen_feats, gen_logits_cls, gen_adv = self.disc(
                         gen_feat_maps.detach())
 
@@ -690,17 +727,20 @@ class Prototype():
                                        torch.mean(gen_adv))  # Wasserstein Loss
                     for p in self.disc.parameters():
                         p.data.clamp_(-0.01, 0.01)
+                    losses['disc_loss'] += torch.mean(p_adv).item()
+                    losses['gen_loss'] += torch.mean(gen_adv).item()
                     losses['disc_loss'] += total_adv_loss.item()
 
                     ''' Reconstruction Loss '''
                     # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
                     y = torch.ones(
                         sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
-                    reconstr_loss = nn.CosineEmbeddingLoss()(sample_feat_vecs, gen_feats, y)
-                    losses['reconstr_loss'] += reconstr_loss.item()
+                    latent_var_recon_loss = nn.CosineEmbeddingLoss()(
+                        sample_feat_vecs, gen_feats, y)
+                    losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
                     ''' Overall Loss and Optimization '''
-                    loss_d = total_adv_loss + real_loss_cls + reconstr_loss
+                    loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
                     losses['overall_d_loss'] += loss_d
 
                     loss_d.backward()
@@ -733,7 +773,7 @@ class Prototype():
                 if batch_idx % mod_mini_batch == 0:    # print every mod_mini_batch mini-batches
                     print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\ng_lr     : %.5f d_lr     : %.5f\n' %
                           (epoch + 1, batch_idx + 1, losses['gen_loss'] / mod_mini_batch, losses['disc_loss'] / (critic_iter_count * mod_mini_batch), losses['cls_gen_loss'] / mod_mini_batch, losses['cls_real_loss'] / (critic_iter_count * mod_mini_batch), losses['adv_gen_loss'] / mod_mini_batch, losses['adv_real_loss'] /
-                           mod_mini_batch, losses['reconstr_loss'] / mod_mini_batch, losses['overall_g_loss'] / mod_mini_batch, losses['overall_d_loss'] / (critic_iter_count * mod_mini_batch), self._get_lr(self.optimizer_g), self._get_lr(self.optimizer_d)))
+                           mod_mini_batch, losses['latent_var_recon_loss'] / mod_mini_batch, losses['overall_g_loss'] / mod_mini_batch, losses['overall_d_loss'] / (critic_iter_count * mod_mini_batch), self._get_lr(self.optimizer_g), self._get_lr(self.optimizer_d)))
 
                     # Store information for plotting
                     self._update_learning_adv_prog([losses['gen_loss'] / mod_mini_batch,
@@ -751,17 +791,21 @@ class Prototype():
                                                     mod_mini_batch,
                                                     losses['overall_d_loss'] /
                                                     mod_mini_batch,
-                                                    losses['reconstr_loss'] / mod_mini_batch])
+                                                    losses['latent_var_recon_loss'] / mod_mini_batch])
 
-                    losses['gen_loss'], losses['cls_gen_loss'], losses['adv_gen_loss'], losses['reconstr_loss'] = 0., 0., 0., 0.
-                    losses['disc_loss'], losses['cls_real_loss'], losses['adv_real_loss'] = 0., 0., 0.
-                    losses['overall_g_loss'], losses['overall_d_loss'] = 0., 0.
+                    losses = {
+                        'gen_loss': 0., 'disc_loss': 0.,
+                        'cls_gen_loss': 0., 'cls_real_loss': 0.,
+                        'adv_gen_loss': 0., 'adv_real_loss': 0.,
+                        'latent_var_recon_loss': 0.,
+                        'overall_g_loss': 0.,  'overall_d_loss': 0.
+                    }
 
                 if batch_idx % 190 == 0:  # print every 250 mini-batches
                     # Visually inspect feature maps
                     if visualize:
                         self.visualize_featmap(
-                            featmaps[0],
+                            feat_maps[0],
                             sample_feat_vecs[0],
                             gen_feats[0],
                             gen_feat_maps[0],
@@ -783,7 +827,7 @@ class Prototype():
                     'epoch': epoch,
                     'loss_progress': (self.gen_loss_plot, self.cls_gen_loss_plot, self.adv_gen_loss_plot, self.overall_g_loss_plot,
                                       self.disc_loss_plot, self.cls_real_loss_plot, self.adv_real_loss_plot, self.overall_d_loss_plot,
-                                      self.reconstr_loss_plot)
+                                      self.latent_var_loss_plot)
                 }, self.ADV_MODEL_CHECKPOINT_PATH)
                 print("Model saved.")
 
@@ -850,20 +894,17 @@ class Prototype():
                 yaml.safe_dump(cur_yaml, yamlfile)  # Also note the safe_dump
 
     def rev_train_cls(self):
-
         # Get generator from adversarial training
-        self._load_adv()
+        self._load_adv(load_disc=False)
+        yaml_path = os.path.join(self.BASE_PATH, 'data.yml')
+        with open(yaml_path, 'r') as yamlfile:
+            cur_yaml = yaml.safe_load(yamlfile)
+            print('Test BNet acc:', cur_yaml['accuracies']['bnet_cls_acc'])
+            print('Test feat vecs acc:', cur_yaml['accuracies']['gen_cls_acc'])
         self._load_class_feat_vecs(self.CLASS_FEAT_OLD_VECS_PATH)
-        print('Test BNet acc:', self._get_disc_cls_acc())
-        print('Test feat vecs acc:', self._get_disc_cls_acc_gen())
 
         self.gen.train()
-        disc_2 = discriminator('no_resnet').to(self.device)
-        disc_2.train()
-        cls_optimizer_2 = optim.Adam(
-            disc_2.parameters(), lr=self.cls_lr, betas=(0.5, 0.999))
-        cls_scheduler_2 = optim.lr_scheduler.StepLR(
-            cls_optimizer_2, step_size=8, gamma=0.1)
+        self.disc.train()
 
         for epoch in range(self.cls_epochs):
             _loss_cls = 0.
@@ -871,26 +912,24 @@ class Prototype():
                 feat_vec, targets = feat_vec.to(
                     self.device), targets.to(self.device)
 
-                cls_optimizer_2.zero_grad()
+                self.optimizer_d.zero_grad()
                 gen_feat_maps = self.gen(feat_vec)
-                feats, logits_cls, _ = disc_2(gen_feat_maps.detach())
+                feats, logits_cls, _ = self.disc(gen_feat_maps.detach())
 
                 # Only train discriminator on classification
                 # No adversarial training here
                 loss_cls = self.cls_criterion(logits_cls, targets.long())
                 loss_cls.backward()
-                cls_optimizer_2.step()
+                self.optimizer_d.step()
 
                 _loss_cls += loss_cls.item()
                 if batch_idx % 100 == 99:    # print every 100 mini-batches
-                    print('\n\n[CLS TRAINING 2] EPOCH %d, MINI-BATCH %5d LR: %f loss: %.5f' %
-                          (epoch + 1, batch_idx + 1, self._get_lr(cls_optimizer_2), _loss_cls / 100))
+                    print('\n\n[REV CLS TRAINING] EPOCH %d, MINI-BATCH %5d LR: %f loss: %.5f' %
+                          (epoch + 1, batch_idx + 1, self._get_lr(self.optimizer_d), _loss_cls / 100))
                     _loss_cls = 0.0
 
-            cls_scheduler_2.step()
+            self.optimizer_d.step()
         print("*** Finished training discriminator for classification.")
-
-        self.disc = disc_2
 
         # Check and log discriminator classification accuracy
         bnet_acc = self._get_disc_cls_acc()
@@ -899,9 +938,11 @@ class Prototype():
         print("DISC FEATURE VECTORS CLASSIFICATION ACCURACY:", feat_vec_acc)
 
         acc_data = {
-            'rev train cls accuracies': {
+            'rev_train_cls': {
                 'rev_bnet_cls_acc': bnet_acc,
-                'rev_gen_cls_acc': feat_vec_acc
+                'rev_gen_cls_acc': feat_vec_acc,
+                'cls_lr': self.cls_lr,
+                'disc': self.disc_type
             }
         }
         yaml_path = os.path.join(self.BASE_PATH, 'data.yml')

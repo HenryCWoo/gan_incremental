@@ -26,12 +26,16 @@ parser.add_argument("--gen_lr", type=float, default=1e-4,
                     help="learning rate")
 parser.add_argument("--disc_lr", type=float, default=5e-4,
                     help="learning rate")
-parser.add_argument("--optimizer", type=str, default="sgd",
+parser.add_argument("--optimizer", type=str, default="adam",
                     help="options=[sgd, adam, rmsprop]")
 parser.add_argument("--loss", type=str, default="minimax",
                     help="options=[minimax, wass]")
 parser.add_argument("--l2_norm", action="store_true", default=False,
                     help="Add l2 normalization layer in discriminator.")
+parser.add_argument("--latent_vec_recon_coeff", type=int, default=1,
+                    help="Coefficient multiplied to latent vector / discriminator output reconstruction loss.")
+parser.add_argument("--latent_var_recon_coeff", type=int, default=1,
+                    help="Coefficient multiplied to latent variable / generator output reconstruction loss.")
 # parser.add_argument("--scheduler", action="store_true", default=False)
 
 # Misc
@@ -66,11 +70,49 @@ def save_args(args, path):
     training_dict['disc_lr'] = args.disc_lr
     training_dict['loss'] = args.loss
     training_dict['l2_norm'] = args.l2_norm
+    training_dict['latent_var_recon_coeff'] = args.latent_var_recon_coeff
+    training_dict['latent_vec_recon_coeff'] = args.latent_vec_recon_coeff
 
     data['note'] = args.note
 
     with open(os.path.join(path, 'data.yml'), 'w') as outfile:
         yaml.dump(data, outfile, default_flow_style=False)
+
+
+def load_args(yaml_path):
+    with open(yaml_path, 'r') as yamlfile:
+        data = yaml.safe_load(yamlfile)
+
+        model_dict = data['model']
+        args.optimizer = model_dict['optim']
+        args.deconv = model_dict['deconv']
+        args.disc = model_dict['disc']  # Should use the same discriminator
+        args.gen = model_dict['gen']
+
+        training_dict = data['training']
+        args.batch_size = training_dict['batch_size']
+        if args.adv_epochs < training_dict['adv_epochs']:
+            args.adv_epochs = training_dict['adv_epochs']
+        else:
+            data['training']['adv_epochs'] = args.adv_epochs
+
+        args.cls_epochs = training_dict['cls_epochs']
+        args.gen_lr = training_dict['gen_lr']
+        args.disc_lr = training_dict['disc_lr']
+        args.loss = training_dict['loss']
+        args.l2_norm = training_dict['l2_norm']
+        args.latent_var_recon_coeff = training_dict['latent_var_recon_coeff']
+        args.latent_vec_recon_coeff = training_dict['latent_vec_recon_coeff']
+
+        if not args.rev_train_cls:
+            args.cls_lr = training_dict['cls_lr']
+
+        if 'note' in data and args.note:
+            args.note = data['note'] + ' | ' + args.note  # Append notes
+
+    # Update data if there were any changes like adding more epochs
+    with open(yaml_path, 'w') as yamlfile:
+        yaml.dump(data, yamlfile)
 
 
 def increm_experiment_dir(args):
@@ -93,16 +135,18 @@ if __name__ == '__main__':
     if not os.path.exists(EXPERIMENTS_PATH):
         os.mkdir(EXPERIMENTS_PATH)
 
-    if args.exp_no == -1:
+    if args.exp_no == -1:  # Create new experiment
         exp_no = increm_experiment_dir(args)
-    else:
+        # Save hyperparameters
+        next_exp_dir = os.path.join(EXPERIMENTS_PATH, str(exp_no))
+        save_args(args, next_exp_dir)
+    else:   # Continue existing experiment
         if not os.path.exists(os.path.join(EXPERIMENTS_PATH, str(args.exp_no))):
             raise NotADirectoryError('Experiment number not found.')
         exp_no = args.exp_no
+        load_args(os.path.join(EXPERIMENTS_PATH, str(exp_no), 'data.yml'))
 
-    # Save hyperparameters
-    next_exp_dir = os.path.join(EXPERIMENTS_PATH, str(exp_no))
-    save_args(args, next_exp_dir)
+    print('[PARAMETERS]', args)
 
     model = Prototype(exp_no,
                       disc_type=args.disc,
@@ -116,7 +160,9 @@ if __name__ == '__main__':
                       disc_lr=args.disc_lr,
                       adv_epochs=args.adv_epochs,
                       loss=args.loss,
-                      l2_norm=args.l2_norm)
+                      l2_norm=args.l2_norm,
+                      latent_var_recon_coeff=args.latent_var_recon_coeff,
+                      latent_vec_recon_coeff=args.latent_vec_recon_coeff)
 
     if args.rev_train_cls:
         model.rev_train_cls()
