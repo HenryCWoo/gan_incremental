@@ -341,13 +341,13 @@ class Prototype():
         for param_group in optimizer.param_groups:
             return param_group['lr']
 
-    def _adversarial_loss(self, outputs, is_real, criterion=nn.BCEWithLogitsLoss()):
+    def _adversarial_loss(self, outputs, is_real, criterion=nn.MSELoss()):
         real_label = torch.tensor(self.real_label).type_as(outputs)
         fake_label = torch.tensor(self.fake_label).type_as(outputs)
 
         labels = (real_label if is_real else fake_label).expand_as(
             outputs).to(self.device)
-        loss = criterion(outputs, labels)
+        loss = criterion(torch.sigmoid(outputs), labels)
         return loss
 
     def _save_class_feat_vecs(self, path, save=True):
@@ -395,7 +395,7 @@ class Prototype():
         self.disc.load_state_dict(checkpoint['disc_state_dict'])
         self.cls_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-    def _load_adv(self, path=None, load_disc=True, load_gen=True):
+    def _load_adv(self, path=None, load_disc=True, load_gen=True, load_opt_d=True, load_opt_g=True):
         if path is None:
             path = self.ADV_MODEL_CHECKPOINT_PATH
         checkpoint = torch.load(path)
@@ -403,6 +403,8 @@ class Prototype():
         # User can choose to use the saved discriminator or train a new one (used in rev_train_cls)
         if load_disc:
             self.disc.load_state_dict(checkpoint['disc_state_dict'])
+
+        if load_opt_d:
             self.optimizer_d.load_state_dict(
                 checkpoint['optimizer_d_state_dict'])
             self.scheduler_d.load_state_dict(
@@ -410,6 +412,8 @@ class Prototype():
 
         if load_gen:
             self.gen.load_state_dict(checkpoint['gen_state_dict'])
+        
+        if load_opt_g:
             self.optimizer_g.load_state_dict(
                 checkpoint['optimizer_g_state_dict'])
             self.scheduler_g.load_state_dict(
@@ -895,7 +899,7 @@ class Prototype():
 
     def rev_train_cls(self):
         # Get generator from adversarial training
-        self._load_adv(load_disc=False)
+        self._load_adv(load_disc=False, load_opt_d=False)
         yaml_path = os.path.join(self.BASE_PATH, 'data.yml')
         with open(yaml_path, 'r') as yamlfile:
             cur_yaml = yaml.safe_load(yamlfile)
@@ -903,7 +907,7 @@ class Prototype():
             print('Test feat vecs acc:', cur_yaml['accuracies']['gen_cls_acc'])
         self._load_class_feat_vecs(self.CLASS_FEAT_OLD_VECS_PATH)
 
-        self.gen.train()
+        self.gen.eval()
         self.disc.train()
 
         for epoch in range(self.cls_epochs):
@@ -912,7 +916,7 @@ class Prototype():
                 feat_vec, targets = feat_vec.to(
                     self.device), targets.to(self.device)
 
-                self.optimizer_d.zero_grad()
+                self.cls_optimizer.zero_grad()
                 gen_feat_maps = self.gen(feat_vec)
                 feats, logits_cls, _ = self.disc(gen_feat_maps.detach())
 
@@ -920,22 +924,26 @@ class Prototype():
                 # No adversarial training here
                 loss_cls = self.cls_criterion(logits_cls, targets.long())
                 loss_cls.backward()
-                self.optimizer_d.step()
+                self.cls_optimizer.step()
 
                 _loss_cls += loss_cls.item()
                 if batch_idx % 100 == 99:    # print every 100 mini-batches
                     print('\n\n[REV CLS TRAINING] EPOCH %d, MINI-BATCH %5d LR: %f loss: %.5f' %
-                          (epoch + 1, batch_idx + 1, self._get_lr(self.optimizer_d), _loss_cls / 100))
+                          (epoch + 1, batch_idx + 1, self._get_lr(self.cls_optimizer), _loss_cls / 100))
                     _loss_cls = 0.0
 
-            self.optimizer_d.step()
+            #self.cls_optimizer.step()
+
+            print("BNET FEATURE MAP CLS ACC:", self._get_disc_cls_acc())
+            print("DISC FEATURE VECTORS CLS ACC:", self._get_disc_cls_acc_gen())
+
         print("*** Finished training discriminator for classification.")
 
         # Check and log discriminator classification accuracy
         bnet_acc = self._get_disc_cls_acc()
         feat_vec_acc = self._get_disc_cls_acc_gen()
-        print("BASE-NET FEATURE MAPS CLASSIFICATION ACCURACY:", bnet_acc)
-        print("DISC FEATURE VECTORS CLASSIFICATION ACCURACY:", feat_vec_acc)
+        print("BASE-NET FEATURE MAPS CLS ACC:", bnet_acc)
+        print("DISC FEATURE VECTORS CLS ACC:", feat_vec_acc)
 
         acc_data = {
             'rev_train_cls': {

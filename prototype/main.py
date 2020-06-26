@@ -84,7 +84,6 @@ def load_args(yaml_path):
         data = yaml.safe_load(yamlfile)
 
         model_dict = data['model']
-        args.optimizer = model_dict['optim']
         args.deconv = model_dict['deconv']
         args.disc = model_dict['disc']  # Should use the same discriminator
         args.gen = model_dict['gen']
@@ -97,14 +96,15 @@ def load_args(yaml_path):
             data['training']['adv_epochs'] = args.adv_epochs
 
         args.cls_epochs = training_dict['cls_epochs']
-        args.gen_lr = training_dict['gen_lr']
         args.disc_lr = training_dict['disc_lr']
+        args.gen_lr = training_dict['gen_lr']
         args.loss = training_dict['loss']
         args.l2_norm = training_dict['l2_norm']
         args.latent_var_recon_coeff = training_dict['latent_var_recon_coeff']
         args.latent_vec_recon_coeff = training_dict['latent_vec_recon_coeff']
 
         if not args.rev_train_cls:
+            args.optimizer = model_dict['optim']
             args.cls_lr = training_dict['cls_lr']
 
         if 'note' in data and args.note:
