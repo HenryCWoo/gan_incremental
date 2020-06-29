@@ -718,11 +718,11 @@ class Prototype():
 
                     ''' Adversarial loss '''
                     # Real
-                    disc_real_loss = -torch.mean(F.relu(p_adv))
+                    disc_real_loss = -torch.mean(p_adv)
                     losses['adv_real_loss'] += disc_real_loss.item()
 
                     # Fake
-                    disc_fake_loss = torch.mean(F.relu(gen_adv))
+                    disc_fake_loss = torch.mean(gen_adv)
                     losses['adv_gen_loss'] += disc_fake_loss.item()
 
                     total_adv_loss = disc_real_loss + disc_fake_loss
