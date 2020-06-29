@@ -584,14 +584,8 @@ class Prototype():
                     sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
                 losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
-                ''' Latent Vector Reconstruction Loss '''
-                latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
-                    self.latent_vec_recon_coeff
-                losses['latent_vec_recon_loss'] += latent_vec_recon_loss.item()
-
                 ''' Overall Loss and Optimization '''
-                total_gen_loss = gen_loss + gen_loss_cls + \
-                    latent_var_recon_loss + latent_vec_recon_loss
+                total_gen_loss = gen_loss + gen_loss_cls + latent_var_recon_loss
                 losses['overall_g_loss'] += total_gen_loss
 
                 total_gen_loss.backward()
@@ -693,7 +687,7 @@ class Prototype():
 
                 # Update critic more times than the generator
                 critic_iter_count = 0
-                while critic_iter_count < 1 and batch_idx < len(feat_map_it):
+                while critic_iter_count < 5 and batch_idx < len(feat_map_it):
                     critic_iter_count += 1
                     inputs, feat_maps, targets = next(feat_map_it)
                     sample_feat_vecs, gen_targets = next(feat_vec_it)
@@ -724,15 +718,15 @@ class Prototype():
 
                     ''' Adversarial loss '''
                     # Real
-                    disc_real_loss = -torch.mean(p_adv)
+                    disc_real_loss = -torch.mean(F.relu(p_adv))
                     losses['adv_real_loss'] += disc_real_loss.item()
 
                     # Fake
-                    disc_fake_loss = torch.mean(gen_adv) 
+                    disc_fake_loss = torch.mean(F.relu(gen_adv))
                     losses['adv_gen_loss'] += disc_fake_loss.item()
 
                     total_adv_loss = disc_real_loss + disc_fake_loss
-                    losses['disc_loss'] += adv_real_loss.item() + gen_real_loss.item()
+                    losses['disc_loss'] += total_adv_loss.item()
 
                     ''' Latent Variable Reconstruction Loss '''
                     # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
@@ -742,13 +736,8 @@ class Prototype():
                         sample_feat_vecs, gen_feats, y)
                     losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
-                    ''' Latent Vector Reconstruction Loss '''
-                    latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
-                        self.latent_vec_recon_coeff
-                    losses['latent_vec_recon_loss'] += latent_vec_recon_loss.item()
-
                     ''' Overall Loss and Optimization '''
-                    loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss + latent_vec_recon_loss
+                    loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
                     losses['overall_d_loss'] += loss_d
 
                     loss_d.backward()
@@ -771,7 +760,7 @@ class Prototype():
                 losses['cls_gen_loss'] += gen_loss_cls.item()
 
                 ''' Adversarial loss '''
-                gen_loss = -torch.mean(gen_adv)
+                gen_loss = -torch.mean(F.relu(gen_adv))
                 losses['gen_loss'] += gen_loss.item()
 
                 ''' Latent Variable Reconstruction Loss '''
