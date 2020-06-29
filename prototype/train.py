@@ -341,13 +341,13 @@ class Prototype():
         for param_group in optimizer.param_groups:
             return param_group['lr']
 
-    def _adversarial_loss(self, outputs, is_real, criterion=nn.MSELoss()):
+    def _adversarial_loss(self, outputs, is_real, criterion=nn.BCEWithLogitsLoss()):
         real_label = torch.tensor(self.real_label).type_as(outputs)
         fake_label = torch.tensor(self.fake_label).type_as(outputs)
 
         labels = (real_label if is_real else fake_label).expand_as(
             outputs).to(self.device)
-        loss = criterion(torch.sigmoid(outputs), labels)
+        loss = criterion(outputs, labels)
         return loss
 
     def _save_class_feat_vecs(self, path, save=True):
@@ -682,12 +682,12 @@ class Prototype():
 
         for epoch in range(self.adv_epochs):
             losses = {
-                'gen_loss': 0., 'disc_loss': 0.,
-                'cls_gen_loss': 0., 'cls_real_loss': 0.,
-                'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                'latent_var_recon_loss': 0.,
-                'overall_g_loss': 0.,  'overall_d_loss': 0.
-            }
+                        'gen_loss': 0., 'disc_loss': 0.,
+                        'cls_gen_loss': 0., 'cls_real_loss': 0.,
+                        'adv_gen_loss': 0., 'adv_real_loss': 0.,
+                        'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
+                        'overall_g_loss': 0.,  'overall_d_loss': 0.
+                    }
 
             feat_map_it = iter(self.train_loader)
             feat_vec_it = iter(self.train_feat_vecs_loader)
@@ -735,7 +735,7 @@ class Prototype():
                     losses['gen_loss'] += torch.mean(gen_adv).item()
                     losses['disc_loss'] += total_adv_loss.item()
 
-                    ''' Reconstruction Loss '''
+                    ''' Latent Variable Reconstruction Loss '''
                     # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
                     y = torch.ones(
                         sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
@@ -766,8 +766,21 @@ class Prototype():
                 gen_loss = -torch.mean(gen_adv)
                 losses['gen_loss'] += gen_loss.item()
 
+                ''' Latent Variable Reconstruction Loss '''
+                # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
+                y = torch.ones(
+                    sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
+                latent_var_recon_loss = nn.CosineEmbeddingLoss()(
+                    sample_feat_vecs, gen_feats, y)
+                losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
+
+                ''' Latent Vector Reconstruction Loss '''
+                latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
+                    self.latent_vec_recon_coeff
+                losses['latent_vec_recon_loss'] = latent_vec_recon_loss.item()
+
                 ''' Overall Loss and Optimization '''
-                total_gen_loss = gen_loss + gen_loss_cls
+                total_gen_loss = gen_loss + gen_loss_cls + latent_var_recon_loss + latent_vec_recon_loss
                 losses['overall_g_loss'] += total_gen_loss
 
                 total_gen_loss.backward()
@@ -775,9 +788,9 @@ class Prototype():
 
                 mod_mini_batch = 50
                 if batch_idx % mod_mini_batch == 0:    # print every mod_mini_batch mini-batches
-                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nreconstr_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\ng_lr     : %.5f d_lr     : %.5f\n' %
+                    print('\n\n[ADVERSARIAL TRAINING] EPOCH %d, MINI-BATCH %5d\ngen_loss     : %.5f disc_loss    : %.5f \ncls_gen_loss : %.5f cls_real_loss: %.5f \nadv_gen_loss : %.5f adv_real_loss: %.5f\nlatent_var_recon_loss: %.5f latent_vec_recon_loss: %.5f\noverall_g_loss: %.5f overall_d_loss  : %.5f\ng_lr     : %.5f d_lr     : %.5f\n' %
                           (epoch + 1, batch_idx + 1, losses['gen_loss'] / mod_mini_batch, losses['disc_loss'] / (critic_iter_count * mod_mini_batch), losses['cls_gen_loss'] / mod_mini_batch, losses['cls_real_loss'] / (critic_iter_count * mod_mini_batch), losses['adv_gen_loss'] / mod_mini_batch, losses['adv_real_loss'] /
-                           mod_mini_batch, losses['latent_var_recon_loss'] / mod_mini_batch, losses['overall_g_loss'] / mod_mini_batch, losses['overall_d_loss'] / (critic_iter_count * mod_mini_batch), self._get_lr(self.optimizer_g), self._get_lr(self.optimizer_d)))
+                           mod_mini_batch, losses['latent_var_recon_loss'] / mod_mini_batch, losses['latent_vec_recon_loss'] / mod_mini_batch, losses['overall_g_loss'] / mod_mini_batch, losses['overall_d_loss'] / (critic_iter_count * mod_mini_batch), self._get_lr(self.optimizer_g), self._get_lr(self.optimizer_d)))
 
                     # Store information for plotting
                     self._update_learning_adv_prog([losses['gen_loss'] / mod_mini_batch,
@@ -795,13 +808,14 @@ class Prototype():
                                                     mod_mini_batch,
                                                     losses['overall_d_loss'] /
                                                     mod_mini_batch,
-                                                    losses['latent_var_recon_loss'] / mod_mini_batch])
+                                                    losses['latent_var_recon_loss'] / mod_mini_batch,
+                                                    losses['latent_vec_recon_loss'] / mod_mini_batch])
 
                     losses = {
                         'gen_loss': 0., 'disc_loss': 0.,
                         'cls_gen_loss': 0., 'cls_real_loss': 0.,
                         'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                        'latent_var_recon_loss': 0.,
+                        'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
                         'overall_g_loss': 0.,  'overall_d_loss': 0.
                     }
 
@@ -831,7 +845,7 @@ class Prototype():
                     'epoch': epoch,
                     'loss_progress': (self.gen_loss_plot, self.cls_gen_loss_plot, self.adv_gen_loss_plot, self.overall_g_loss_plot,
                                       self.disc_loss_plot, self.cls_real_loss_plot, self.adv_real_loss_plot, self.overall_d_loss_plot,
-                                      self.latent_var_loss_plot)
+                                      self.latent_var_loss_plot, self.latent_vec_loss_plot)
                 }, self.ADV_MODEL_CHECKPOINT_PATH)
                 print("Model saved.")
 
