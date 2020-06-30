@@ -540,16 +540,8 @@ class Prototype():
                 total_adv_loss = disc_real_loss + disc_fake_loss
                 losses['disc_loss'] += total_adv_loss.item()
 
-                ''' Latent Variable Reconstruction Loss '''
-                # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
-                y = torch.ones(
-                    sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
-                latent_var_recon_loss = nn.CosineEmbeddingLoss()(
-                    sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
-                losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
-
                 ''' Overall Loss and Optimization '''
-                loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
+                loss_d = total_adv_loss + real_loss_cls
                 losses['overall_d_loss'] += loss_d
 
                 loss_d.backward()
@@ -579,8 +571,14 @@ class Prototype():
                     sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
                 losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
+                ''' Latent Vector Reconstruction Loss '''
+                latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
+                    self.latent_vec_recon_coeff
+                losses['latent_vec_recon_loss'] += latent_vec_recon_loss.item()
+
                 ''' Overall Loss and Optimization '''
-                total_gen_loss = gen_loss + gen_loss_cls + latent_var_recon_loss
+                total_gen_loss = gen_loss + gen_loss_cls + \
+                    latent_var_recon_loss + latent_vec_recon_loss
                 losses['overall_g_loss'] += total_gen_loss
 
                 total_gen_loss.backward()
@@ -730,16 +728,8 @@ class Prototype():
                     total_adv_loss = disc_real_loss + disc_fake_loss
                     losses['disc_loss'] += total_adv_loss.item()
 
-                    ''' Latent Variable Reconstruction Loss '''
-                    # See https://pytorch.org/docs/stable/nn.html#cosineembeddingloss for details
-                    y = torch.ones(
-                        sample_feat_vecs.shape[0], requires_grad=False).to(self.device)
-                    latent_var_recon_loss = nn.CosineEmbeddingLoss()(
-                        sample_feat_vecs, gen_feats, y)
-                    losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
-
                     ''' Overall Loss and Optimization '''
-                    loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
+                    loss_d = total_adv_loss + real_loss_cls
                     losses['overall_d_loss'] += loss_d
 
                     loss_d.backward()
