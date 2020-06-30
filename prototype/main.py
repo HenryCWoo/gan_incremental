@@ -107,8 +107,10 @@ def load_args(yaml_path):
             args.optimizer = model_dict['optim']
             args.cls_lr = training_dict['cls_lr']
 
-        if 'note' in data and args.note:
+        if args.note and data['note'] is not None:
             args.note = data['note'] + ' | ' + args.note  # Append notes
+        else:
+            data['note'] = args.note
 
     # Update data if there were any changes like adding more epochs
     with open(yaml_path, 'w') as yamlfile:

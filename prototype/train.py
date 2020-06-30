@@ -412,7 +412,7 @@ class Prototype():
 
         if load_gen:
             self.gen.load_state_dict(checkpoint['gen_state_dict'])
-        
+
         if load_opt_g:
             self.optimizer_g.load_state_dict(
                 checkpoint['optimizer_g_state_dict'])
@@ -548,13 +548,8 @@ class Prototype():
                     sample_feat_vecs, gen_feats, y) * self.latent_var_recon_coeff
                 losses['latent_var_recon_loss'] += latent_var_recon_loss.item()
 
-                ''' Latent Vector Reconstruction Loss '''
-                latent_vec_recon_loss = nn.MSELoss()(gen_feat_maps, feat_maps) * \
-                    self.latent_vec_recon_coeff
-                losses['latent_vec_recon_loss'] += latent_vec_recon_loss.item()
-
                 ''' Overall Loss and Optimization '''
-                loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss + latent_vec_recon_loss
+                loss_d = total_adv_loss + real_loss_cls + latent_var_recon_loss
                 losses['overall_d_loss'] += loss_d
 
                 loss_d.backward()
@@ -667,17 +662,24 @@ class Prototype():
 
     def _train_adv_wass(self, visualize=True):
         print("*** Wasserstein Adversarial Training...")
+
+        cur_epoch = 0
+        # Pick up from where you left off if there's more to be trained
+        if os.path.exists(self.ADV_MODEL_CHECKPOINT_PATH):
+            cur_epoch = self._load_adv()
+            print('*** Loaded adversary model (Discriminator and Generator).')
+
         self.disc.train()
         self.gen.train()
 
-        for epoch in range(self.adv_epochs):
+        for epoch in range(cur_epoch, self.adv_epochs):
             losses = {
-                        'gen_loss': 0., 'disc_loss': 0.,
-                        'cls_gen_loss': 0., 'cls_real_loss': 0.,
-                        'adv_gen_loss': 0., 'adv_real_loss': 0.,
-                        'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
-                        'overall_g_loss': 0.,  'overall_d_loss': 0.
-                    }
+                'gen_loss': 0., 'disc_loss': 0.,
+                'cls_gen_loss': 0., 'cls_real_loss': 0.,
+                'adv_gen_loss': 0., 'adv_real_loss': 0.,
+                'latent_var_recon_loss': 0., 'latent_vec_recon_loss': 0.,
+                'overall_g_loss': 0.,  'overall_d_loss': 0.
+            }
 
             feat_map_it = iter(self.train_loader)
             feat_vec_it = iter(self.train_feat_vecs_loader)
@@ -777,7 +779,8 @@ class Prototype():
                 losses['latent_vec_recon_loss'] += latent_vec_recon_loss.item()
 
                 ''' Overall Loss and Optimization '''
-                total_gen_loss = gen_loss + gen_loss_cls + latent_var_recon_loss + latent_vec_recon_loss
+                total_gen_loss = gen_loss + gen_loss_cls + \
+                    latent_var_recon_loss + latent_vec_recon_loss
                 losses['overall_g_loss'] += total_gen_loss
 
                 total_gen_loss.backward()
@@ -805,7 +808,8 @@ class Prototype():
                                                     mod_mini_batch,
                                                     losses['overall_d_loss'] /
                                                     mod_mini_batch,
-                                                    losses['latent_var_recon_loss'] / mod_mini_batch,
+                                                    losses['latent_var_recon_loss'] /
+                                                    mod_mini_batch,
                                                     losses['latent_vec_recon_loss'] / mod_mini_batch])
 
                     losses = {
@@ -943,10 +947,11 @@ class Prototype():
                           (epoch + 1, batch_idx + 1, self._get_lr(self.cls_optimizer), _loss_cls / 100))
                     _loss_cls = 0.0
 
-            #self.cls_optimizer.step()
+            # self.cls_optimizer.step()
 
             print("BNET FEATURE MAP CLS ACC:", self._get_disc_cls_acc())
-            print("DISC FEATURE VECTORS CLS ACC:", self._get_disc_cls_acc_gen())
+            print("DISC FEATURE VECTORS CLS ACC:",
+                  self._get_disc_cls_acc_gen())
 
         print("*** Finished training discriminator for classification.")
 
