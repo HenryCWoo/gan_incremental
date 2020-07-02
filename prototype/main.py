@@ -1,8 +1,8 @@
 import os
 import yaml
 import argparse
-from train import Prototype
-from train import EXPERIMENTS_PATH
+from train_embed import Prototype, EXPERIMENTS_PATH
+# from train import Prototype, EXPERIMENTS_PATH
 
 parser = argparse.ArgumentParser()
 
@@ -32,10 +32,8 @@ parser.add_argument("--loss", type=str, default="minimax",
                     help="options=[minimax, wass]")
 parser.add_argument("--l2_norm", action="store_true", default=False,
                     help="Add l2 normalization layer in discriminator.")
-parser.add_argument("--latent_vec_recon_coeff", type=int, default=1,
-                    help="Coefficient multiplied to latent vector / discriminator output reconstruction loss.")
 parser.add_argument("--latent_var_recon_coeff", type=int, default=1,
-                    help="Coefficient multiplied to latent variable / generator output reconstruction loss.")
+                    help="Coefficient multiplied to latent vector / discriminator output reconstruction loss.")
 # parser.add_argument("--scheduler", action="store_true", default=False)
 
 # Misc
@@ -71,7 +69,6 @@ def save_args(args, path):
     training_dict['loss'] = args.loss
     training_dict['l2_norm'] = args.l2_norm
     training_dict['latent_var_recon_coeff'] = args.latent_var_recon_coeff
-    training_dict['latent_vec_recon_coeff'] = args.latent_vec_recon_coeff
 
     data['note'] = args.note
 
@@ -101,7 +98,6 @@ def load_args(yaml_path):
         args.loss = training_dict['loss']
         args.l2_norm = training_dict['l2_norm']
         args.latent_var_recon_coeff = training_dict['latent_var_recon_coeff']
-        args.latent_vec_recon_coeff = training_dict['latent_vec_recon_coeff']
 
         if not args.rev_train_cls:
             args.optimizer = model_dict['optim']
@@ -109,7 +105,7 @@ def load_args(yaml_path):
 
         if args.note and data['note'] is not None:
             args.note = data['note'] + ' | ' + args.note  # Append notes
-        else:
+        elif args.note and data['note'] is None:
             data['note'] = args.note
 
     # Update data if there were any changes like adding more epochs
@@ -150,21 +146,23 @@ if __name__ == '__main__':
 
     print('[PARAMETERS]', args)
 
-    model = Prototype(exp_no,
-                      disc_type=args.disc,
-                      optimizer=args.optimizer,
-                      device=args.device,
-                      classes_count=10,  # TODO: currently we stay at 10 classes bc no incremental learning
-                      batch_size=args.batch_size,
-                      cls_lr=args.cls_lr,
-                      cls_epochs=args.cls_epochs,
-                      gen_lr=args.gen_lr,
-                      disc_lr=args.disc_lr,
-                      adv_epochs=args.adv_epochs,
-                      loss=args.loss,
-                      l2_norm=args.l2_norm,
-                      latent_var_recon_coeff=args.latent_var_recon_coeff,
-                      latent_vec_recon_coeff=args.latent_vec_recon_coeff)
+    model = Prototype(
+        exp_no,
+        disc_type=args.disc,
+        gen_type=args.gen,
+        optimizer=args.optimizer,
+        device=args.device,
+        classes_count=10,  # TODO: currently we stay at 10 classes bc no incremental learning
+        batch_size=args.batch_size,
+        cls_lr=args.cls_lr,
+        cls_epochs=args.cls_epochs,
+        gen_lr=args.gen_lr,
+        disc_lr=args.disc_lr,
+        adv_epochs=args.adv_epochs,
+        loss=args.loss,
+        l2_norm=args.l2_norm,
+        latent_var_recon_coeff=args.latent_var_recon_coeff
+    )
 
     if args.rev_train_cls:
         model.rev_train_cls()
